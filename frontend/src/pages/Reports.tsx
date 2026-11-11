@@ -212,9 +212,9 @@ function KpiGrid({ k, currency }: { k: ReportKpis; currency: string }) {
           transition={{ delay: i * 0.03 }}
           className="rounded-lg border border-line bg-panel p-3.5"
         >
-          <div className="text-[11px] tracking-wide text-muted uppercase">{t.label}</div>
+          <div className="text-xs tracking-wide text-muted uppercase">{t.label}</div>
           <div className={`num mt-1 text-xl font-semibold ${t.tone ?? ''}`}>{t.value}</div>
-          {t.hint && <div className="mt-0.5 text-[11px] text-faint">{t.hint}</div>}
+          {t.hint && <div className="mt-0.5 text-xs text-faint">{t.hint}</div>}
         </motion.div>
       ))}
     </div>
@@ -225,7 +225,7 @@ function Card({ title, subtitle, children }: { title: string; subtitle?: string;
   return (
     <section className="rounded-lg border border-line bg-panel p-4">
       <h2 className="text-sm font-medium">{title}</h2>
-      {subtitle && <p className="mb-3 text-[11px] text-faint">{subtitle}</p>}
+      {subtitle && <p className="mb-3 text-xs text-faint">{subtitle}</p>}
       {children}
     </section>
   )
@@ -234,7 +234,7 @@ function Card({ title, subtitle, children }: { title: string; subtitle?: string;
 function Mini({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[10px] text-faint uppercase">{label}</div>
+      <div className="text-[11px] text-faint uppercase">{label}</div>
       <div className="mt-0.5">{value}</div>
     </div>
   )
@@ -271,7 +271,7 @@ function Reasons({ rows, currency }: { rows: Report['reasons']; currency: string
 function CycleTable({ rows }: { rows: CycleRow[] }) {
   if (rows.length === 0) return <p className="p-4 text-xs text-faint">Loading / no cycles.</p>
   return (
-    <table className="num w-full text-[11px]">
+    <table className="num w-full text-xs">
       <thead className="text-faint">
         <tr className="[&>th]:px-3 [&>th]:py-1.5 [&>th]:text-right [&>th]:font-normal">
           <th className="!text-left">Cycle</th>

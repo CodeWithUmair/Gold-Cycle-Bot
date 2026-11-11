@@ -62,7 +62,7 @@ export function SettingsModal({ open, onClose, running }: { open: boolean; onClo
                 Save
               </button>
             </div>
-            <p className="mt-1 text-[11px] text-faint">
+            <p className="mt-1 text-xs text-faint">
               {running ? 'Stop the bot to change the symbol. ' : ''}Detected via *XAU*USD* on this account.
               {s.symbols_error ? ` (${s.symbols_error})` : ''}
             </p>

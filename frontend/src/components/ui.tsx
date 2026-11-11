@@ -92,7 +92,7 @@ export function Toasts({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: num
             onClick={() => dismiss(t.id)}
             className={`pointer-events-auto cursor-pointer rounded-lg border bg-panel-2/95 px-3.5 py-2.5 text-sm shadow-xl shadow-black/40 backdrop-blur ${tone[t.level]}`}
           >
-            <span className={`mr-2 font-semibold uppercase text-[10px] tracking-wider ${icon[t.level]}`}>{t.level}</span>
+            <span className={`mr-2 font-semibold uppercase text-[11px] tracking-wider ${icon[t.level]}`}>{t.level}</span>
             {t.msg}
           </motion.div>
         ))}

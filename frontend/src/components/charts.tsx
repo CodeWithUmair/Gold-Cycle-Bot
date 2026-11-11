@@ -81,14 +81,14 @@ export function EquityChart({ points, currency, height = 220 }: { points: Equity
         {ticks.map((t) => (
           <g key={t}>
             <line x1={PAD.l} x2={w - PAD.r} y1={y(t)} y2={y(t)} stroke={MARK.grid} strokeDasharray={t === 0 ? undefined : '2 4'} />
-            <text x={PAD.l - 8} y={y(t) + 3.5} textAnchor="end" fontSize="10" fill={MARK.axis} className="num">
+            <text x={PAD.l - 8} y={y(t) + 3.5} textAnchor="end" fontSize="11" fill={MARK.axis} className="num">
               {t.toFixed(Math.abs(t) < 10 ? 2 : 0)}
             </text>
           </g>
         ))}
         <path d={area} fill="url(#eqfill)" />
         <path d={path} fill="none" stroke={MARK.line} strokeWidth="2" strokeLinejoin="round" />
-        <text x={w - PAD.r} y={height - 6} textAnchor="end" fontSize="10" fill={MARK.axis}>
+        <text x={w - PAD.r} y={height - 6} textAnchor="end" fontSize="11" fill={MARK.axis}>
           cycle # →
         </text>
         {hp && (
@@ -142,7 +142,7 @@ export function DailyBars({ rows, currency, height = 220 }: { rows: DailyRow[]; 
         {ticks.map((t) => (
           <g key={t}>
             <line x1={PAD.l} x2={w - PAD.r} y1={y(t)} y2={y(t)} stroke={MARK.grid} strokeDasharray={t === 0 ? undefined : '2 4'} />
-            <text x={PAD.l - 8} y={y(t) + 3.5} textAnchor="end" fontSize="10" fill={MARK.axis} className="num">
+            <text x={PAD.l - 8} y={y(t) + 3.5} textAnchor="end" fontSize="11" fill={MARK.axis} className="num">
               {t.toFixed(Math.abs(t) < 10 ? 2 : 0)}
             </text>
           </g>
@@ -162,7 +162,7 @@ export function DailyBars({ rows, currency, height = 220 }: { rows: DailyRow[]; 
               <rect x={cx - slot / 2} y={PAD.t} width={slot} height={ih} fill="transparent" />
               <path d={d} fill={r.pnl >= 0 ? MARK.gain : MARK.loss} opacity={hover === null || hover === i ? 1 : 0.45} />
               {i % labelEvery === 0 && (
-                <text x={cx} y={height - 6} textAnchor="middle" fontSize="10" fill={MARK.axis}>
+                <text x={cx} y={height - 6} textAnchor="middle" fontSize="11" fill={MARK.axis}>
                   {r.date.slice(5)}
                 </text>
               )}

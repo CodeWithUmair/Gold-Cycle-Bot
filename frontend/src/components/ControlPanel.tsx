@@ -246,7 +246,7 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
               </button>
             </div>
             {tick && trig !== null && !Number.isNaN(trig) && (
-              <p className="mt-1 text-[11px] text-faint">
+              <p className="mt-1 text-xs text-faint">
                 {Math.abs(trig - tick.bid).toFixed(2)} pts {trig > tick.bid ? 'above' : trig < tick.bid ? 'below' : 'at'} bid
               </p>
             )}
@@ -256,7 +256,7 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
             <label className="label">Lot</label>
             <input className="field" inputMode="decimal" value={f.lot} onChange={(e) => set('lot', e.target.value)} />
             {engine?.spec && (
-              <p className="mt-1 text-[11px] text-faint">
+              <p className="mt-1 text-xs text-faint">
                 min {engine.spec.volume_min} · step {engine.spec.volume_step} · max {engine.spec.volume_max}
               </p>
             )}
@@ -286,7 +286,7 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
                 value={priceMode ? f.tpPrice : f.tp}
                 onChange={(e) => set(priceMode ? 'tpPrice' : 'tp', e.target.value)}
               />
-              <p className="num mt-1 text-[11px] text-faint">
+              <p className="num mt-1 text-xs text-faint">
                 {first ? (priceMode ? `= ${Math.abs(first.tp - first.entry).toFixed(2)} pts` : `@ ${fmt(first.tp, 2)}`) : ' '}
               </p>
             </div>
@@ -298,7 +298,7 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
                 value={priceMode ? f.slPrice : f.sl}
                 onChange={(e) => set(priceMode ? 'slPrice' : 'sl', e.target.value)}
               />
-              <p className="num mt-1 text-[11px] text-faint">
+              <p className="num mt-1 text-xs text-faint">
                 {first ? (priceMode ? `= ${Math.abs(first.entry - first.sl).toFixed(2)} pts` : `@ ${fmt(first.sl, 2)}`) : ' '}
               </p>
             </div>
@@ -430,7 +430,7 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
           Close all & stop
         </button>
         {running && (
-          <p className="text-center text-[11px] leading-snug text-faint">
+          <p className="text-center text-xs leading-snug text-faint">
             One session runs at a time. To start a different one, stop this session first — the form unlocks when the
             badge shows STOPPED or IDLE.
           </p>
@@ -456,11 +456,11 @@ function HowItWorks({ mode }: { mode: Mode }) {
         ]
   return (
     <div className="rounded-lg border border-dashed border-line p-3">
-      <p className="mb-2 text-[11px] font-medium tracking-wide text-muted uppercase">How a {mode === 'CYCLE' ? 'cycle session' : 'single trade'} works</p>
+      <p className="mb-2 text-xs font-medium tracking-wide text-muted uppercase">How a {mode === 'CYCLE' ? 'cycle session' : 'single trade'} works</p>
       <ol className="space-y-1.5 text-xs">
         {steps.map(([t, d], i) => (
           <li key={t} className="flex gap-2">
-            <span className="num flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-gold/15 text-[10px] text-gold">{i + 1}</span>
+            <span className="num flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-gold/15 text-[11px] text-gold">{i + 1}</span>
             <span>
               <span className="text-text">{t}.</span> <span className="text-muted">{d}</span>
             </span>
@@ -528,7 +528,7 @@ function RunningCard({ engine, floating, currency, digits, mode }: { engine: Eng
 function Kv({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] text-faint uppercase">{k}</div>
+      <div className="text-[11px] text-faint uppercase">{k}</div>
       <div>{v}</div>
     </div>
   )

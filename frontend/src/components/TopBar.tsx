@@ -31,7 +31,7 @@ export function TopBar({ engine, account, tick, wsConnected, broker, dryRun, onS
           <path d="M16 5 a11 11 0 0 1 11 11" fill="none" stroke="var(--color-up)" strokeWidth="3.5" strokeLinecap="round" />
         </svg>
         <span className="text-[15px] font-semibold tracking-tight">GoldCycle</span>
-        {mode && <span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold tracking-wider ${modeCls}`}>{mode}</span>}
+        {mode && <span className={`rounded border px-1.5 py-0.5 text-[11px] font-bold tracking-wider ${modeCls}`}>{mode}</span>}
       </div>
 
       <nav className="flex rounded-md border border-line p-0.5" aria-label="View">
@@ -98,7 +98,7 @@ export function TopBar({ engine, account, tick, wsConnected, broker, dryRun, onS
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex flex-col leading-tight">
-      <span className="text-[10px] tracking-wider text-faint uppercase">{label}</span>
+      <span className="text-[11px] tracking-wider text-faint uppercase">{label}</span>
       <span className="text-[13px]">{value}</span>
     </div>
   )

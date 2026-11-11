@@ -71,7 +71,7 @@ export function Journal({ rows, sessionPnl, currency, onOpenLog }: { rows: Cycle
                   <td className="text-right text-down/90">{fmt(r.sl)}</td>
                   <td>
                     {r.close_reason ? (
-                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${RESULT_CLS[r.close_reason] ?? 'bg-warn/15 text-warn'}`}>
+                      <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${RESULT_CLS[r.close_reason] ?? 'bg-warn/15 text-warn'}`}>
                         {r.close_reason.replaceAll('_', ' ')}
                       </span>
                     ) : (

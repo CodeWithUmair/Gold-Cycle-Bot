@@ -55,8 +55,8 @@ export function PriceChart({ engine, cycles, tickRef }: Props) {
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: C.muted,
-        fontFamily: 'JetBrains Mono, Consolas, monospace',
-        fontSize: 11,
+        fontFamily: 'JetBrains Mono Variable, Consolas, monospace',
+        fontSize: 12,
         attributionLogo: false,
       },
       grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
@@ -227,7 +227,7 @@ function Legend() {
     ['stop', C.warn, 'dashed'],
   ]
   return (
-    <div className="ml-auto hidden items-center gap-3 text-[11px] text-muted md:flex">
+    <div className="ml-auto hidden items-center gap-3 text-xs text-muted md:flex">
       {items.map(([l, c, s]) => (
         <span key={l} className="inline-flex items-center gap-1.5">
           <span className="w-4 border-t-2" style={{ borderColor: c, borderTopStyle: s as 'solid' }} />
