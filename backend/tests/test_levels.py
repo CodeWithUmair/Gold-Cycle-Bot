@@ -130,6 +130,9 @@ def test_validate_config_against_symbol() -> None:
     )
     assert errors == []
     assert any("return to 4000" in w for w in warnings)
+    assert not any("TP 6 pts is small" in w for w in warnings)
+    _, warnings = risk.validate_config(cfg(Direction.BUY, 2, tp_points=0.6), spec, Tick(4010, 4010.24, 0))
+    assert any("TP 0.6 pts is small" in w for w in warnings)
 
 
 def test_round_volume() -> None:

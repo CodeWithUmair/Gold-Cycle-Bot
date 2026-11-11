@@ -79,6 +79,15 @@ def validate_config(cfg: CycleConfig, spec: SymbolSpec, tick: Tick | None) -> tu
             warnings.append(
                 f"Current spread {spread_points(tick):.2f} pts is wider than max {cfg.max_spread_points} pts"
             )
+        # TP is measured from the planned entry, but the fill can be worse by spread + slippage
+        # (seen live: planned 4044.13, fill 4044.59, TP 4044.73 -> only 0.14 pts of room).
+        worst_cost = spread_points(tick) + cfg.max_slippage_points
+        if cfg.tp_pts <= 2 * worst_cost:
+            warnings.append(
+                f"TP {cfg.tp_pts:g} pts is small vs spread {spread_points(tick):.2f} + max slippage "
+                f"{cfg.max_slippage_points:g}: a fill can land up to {worst_cost:.2f} pts worse, leaving "
+                f"as little as {max(cfg.tp_pts - worst_cost, 0):.2f} pts to TP"
+            )
         if cfg.stop_price is not None and levels.stop_reached(tick.bid, tick.ask, cfg.direction, cfg.stop_price):
             warnings.append("Price is already beyond the stop price")
     return errors, warnings

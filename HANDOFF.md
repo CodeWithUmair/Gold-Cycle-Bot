@@ -58,6 +58,7 @@ An empty folder and the spec (CLAUDE.md). No code.
 | **Reports / analytics** view (top bar → Reports): KPI tiles (net P/L, win rate, profit factor, avg win/loss, expectancy, max drawdown, best/worst, streaks), cumulative P/L chart, daily P/L bars, close-reason breakdown, execution quality, sessions table that expands to cycles, range filter, CSV export | ✅ tested (`test_reports.py`) | `app/reports.py`, `app/api/reports.py`, `repo.cycles_since/sessions_since`, `frontend/src/pages/Reports.tsx`, `components/charts.tsx` |
 | "How do I start another cycle?" guidance: How-it-works steps before the first session, a "Last session ended → edit and Arm" card, and a one-session-at-a-time note while running | ✅ | `ControlPanel.tsx` |
 | User guide + demo-video script | ✅ | `docs/USER_GUIDE.md` |
+| Clearer typography: self-hosted Inter + JetBrains Mono, bigger small text; hand cursor on every clickable control | ✅ | `index.css`, `main.tsx` |
 | Chart colours for gain/loss validated with the dataviz palette validator (dark surface): `#1ea672` / `#e5534b`; colorblind ΔE 6.2, so polarity is also encoded by position + signed values | ✅ | `components/charts.tsx` |
 
 Quality gates at end of session: **47/47 pytest**, **mypy --strict clean**, **ruff clean**,
@@ -100,8 +101,15 @@ Script: [backend/tools/live_demo_test.py](backend/tools/live_demo_test.py) (refu
 | Scenario | Result |
 |---|---|
 | SINGLE BUY, trigger 4042.82, TP 1 / SL 1 | ✅ touched at 4042.80 → filled 4043.045 (slip +0.22 = spread, BUY fills at ask) → **server-side** TP 4043.82 / SL 4041.82 on the position → closed by broker, deal reason **TP** → +0.77 USD → IDLE `COMPLETE`. |
-| CYCLE BUY gap blank, TP 0.6 / SL 2, stop +1.5, max 3 | ⏳ armed at 4044.13, waiting for price (result to be added below) |
-| Kill switch on an open position | ⏳ pending |
+| CYCLE BUY gap blank, TP 0.6 / SL 2, stop +1.5, max 3 | ✅ partial: waited ~15 min for the touch → touched at 4044.35 (price jumped 0.22 over the 4044.13 level, inside the 0.5 tolerance) → filled 4044.59 (slip +0.46 = jump + 0.24 spread) → server TP 4044.73 / SL 4042.13. The test's 15-min wait expired 12 s after the fill, so the **TP→C2 chain and the stop-price close were not observed live** (both are covered by sim tests). |
+| Kill switch on an open position | ✅ the C1 above was closed by `close_all_and_stop` on the real server → journal `KILL_SWITCH` −0.07 → STOPPED → **0 bot positions left**. (The separate kill scenario couldn't arm because C1 was still open; the bot correctly refused with "already running".) |
+
+#### Finding #7 — 🟡 Small TPs get eaten by spread + slippage (seen live)
+TP/SL come from the **planned** entry (spec §4.2). A BUY triggers on bid but fills at ask, and a fast
+tick can jump past the level. Live: planned 4044.13 → fill 4044.59 → TP 4044.73 = only **0.14 pts** of
+room on a 0.6-pt TP. **Fix:** the form now warns when `tp_points ≤ 2 × (spread + max_slippage)`.
+**For the client:** keep TP comfortably above ~1 pt on XAUUSDm, or use `level_anchor=fill`.
+The test script now uses TP 1.5 and kill-switches a timed-out cycle instead of colliding with the next scenario.
 
 ### How to run everything
 ```powershell
@@ -122,7 +130,8 @@ an admin password hash for user `admin` (the password was given to the user in c
 `python -m app.security` if lost).
 
 ### ⚠️ NOT done yet — next session starts here
-1. Record the CYCLE and kill-switch live results in the table above (or rerun the script).
+1. Observe the **TP→C2 chain and a stop-price close live** on demo (rerun `tools\live_demo_test.py cycle`,
+   or run a DRY_RUN=false session from the dashboard). Everything else is live-verified.
 2. Client answers Q1/Q2/Q5 → [BACKLOG B1](docs/BACKLOG.md).
 3. Full-session demo run with `DRY_RUN=false` on the client's VPS → B2, B4.
 4. DRY_RUN shows a paper balance, not the real one → B7.

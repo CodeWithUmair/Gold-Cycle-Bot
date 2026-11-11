@@ -70,24 +70,28 @@ async def main(which: list[str]) -> None:
 
         if "cycle" in which:
             b = await bid()
-            trig = round(b + 0.3, 2)
-            print(
-                f"\n=== CYCLE BUY gap blank: bid {b}, trigger {trig}, TP 0.6 / SL 2, stop {trig + 1.5:.2f}, max 3 ==="
-            )
+            trig = round(b - 0.1, 2)
+            # TP must be well above spread + slippage: TP is measured from the PLANNED entry and a BUY fills
+            # at the ask (session 1 used TP 0.6 and the fill landed only 0.14 pts below TP).
+            print(f"\n=== CYCLE BUY gap blank: bid {b}, trigger {trig}, TP 1.5 / SL 3, stop {trig + 4:.2f}, max 3 ===")
             await engine.arm(
                 CycleConfig(
                     mode="CYCLE",
                     direction="BUY",
                     trigger_price=trig,
                     lot=0.01,
-                    tp_points=0.6,
-                    sl_points=2,
+                    tp_points=1.5,
+                    sl_points=3,
                     cycle_gap=None,
-                    stop_price=round(trig + 1.5, 2),
+                    stop_price=round(trig + 4, 2),
                     max_cycles=3,
                 )
             )
-            await wait_until(engine, lambda: engine.state in (BotState.IDLE, BotState.STOPPED), 900)
+            done = await wait_until(engine, lambda: engine.state in (BotState.IDLE, BotState.STOPPED), 1800)
+            if not done:  # never leave a cycle running into the next scenario
+                print("  timeout: closing the running cycle with the kill switch")
+                await engine.close_all_and_stop()
+                await wait_until(engine, lambda: engine.state == BotState.STOPPED, 30)
             print(f"  RESULT state={engine.state} reason={engine.stop_reason} pnl={engine.session_pnl:.2f}")
 
         if "kill" in which:

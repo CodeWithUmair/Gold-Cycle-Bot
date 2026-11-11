@@ -36,6 +36,23 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Everything clickable shows the hand cursor (Tailwind v4 resets buttons to `default`). */
+button:not(:disabled),
+a[href],
+select:not(:disabled),
+summary,
+label[for],
+[role="button"],
+input[type="checkbox"]:not(:disabled),
+input[type="radio"]:not(:disabled) {
+  cursor: pointer;
+}
+button:disabled,
+select:disabled,
+fieldset:disabled button {
+  cursor: not-allowed;
+}
+
 .num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
