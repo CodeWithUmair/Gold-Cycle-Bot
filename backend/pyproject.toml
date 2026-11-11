@@ -1,0 +1,31 @@
+[project]
+name = "goldcycle"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["B008"]  # FastAPI Depends() in defaults
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+exclude = ["\\.venv"]
+
+[[tool.mypy.overrides]]
+module = ["app.broker.mt5_gateway"]
+disallow_any_expr = false
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disable_error_code = ["comparison-overlap", "unused-ignore"]  # state changes across awaits
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

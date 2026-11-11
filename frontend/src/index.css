@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0a0d13;
+  --color-panel: #10141c;
+  --color-panel-2: #151a24;
+  --color-line: #1f2633;
+  --color-text: #e6e9ef;
+  --color-muted: #8791a5;
+  --color-faint: #5b6476;
+  --color-gold: #e3b341;
+  --color-up: #26c281;
+  --color-down: #ef5350;
+  --color-warn: #f5a524;
+  --color-info: #5aa9ff;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.field {
+  @apply w-full rounded-md border border-line bg-bg px-2.5 py-1.5 text-sm text-text outline-none transition-colors placeholder:text-faint focus:border-gold/70 disabled:opacity-50;
+  font-family: var(--font-mono);
+}
+
+.label {
+  @apply mb-1 block text-[11px] font-medium tracking-wide text-muted uppercase;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-[background-color,opacity,transform] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 4px;
+}
