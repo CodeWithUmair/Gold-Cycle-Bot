@@ -295,7 +295,7 @@ function CycleTable({ rows }: { rows: CycleRow[] }) {
             <td>{fmt(r.fill_price, 3)}</td>
             <td>{fmt(r.slippage)}</td>
             <td>{fmt(r.tp)}</td>
-            <td>{fmt(r.sl)}</td>
+            <td>{fmt(r.sl || null)}</td>
             <td>{fmt(r.close_price, 3)}</td>
             <td className="!text-left">{r.close_reason ?? 'open'}</td>
             <td className={pnlColor(r.pnl)}>{r.pnl === null ? '—' : fmtMoney(r.pnl)}</td>

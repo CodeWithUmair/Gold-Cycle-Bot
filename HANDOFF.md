@@ -132,7 +132,7 @@ an admin password hash for user `admin` (the password was given to the user in c
 ### ⚠️ NOT done yet — next session starts here
 1. Observe the **TP→C2 chain and a stop-price close live** on demo (rerun `tools\live_demo_test.py cycle`,
    or run a DRY_RUN=false session from the dashboard). Everything else is live-verified.
-2. Client answers Q1/Q2/Q5 → [BACKLOG B1](docs/BACKLOG.md).
+2. Client answers Q5 → [BACKLOG B1](docs/BACKLOG.md). (Q1/Q2/Q6 answered 2026-11-16, cycle rules changed: [ADR-0018](docs/decisions/0018-cycle-rules-2026-11-16.md).)
 3. Full-session demo run with `DRY_RUN=false` on the client's VPS → B2, B4.
 4. DRY_RUN shows a paper balance, not the real one → B7.
 5. Everything else: [docs/BACKLOG.md](docs/BACKLOG.md).
@@ -148,8 +148,6 @@ The most important ones for anyone changing the engine:
 ### Open items (client)
 | # | Question | Current default |
 |---|---|---|
-| Q1 | With a gap, after C1 TP at 4003, does C2 wait for a pullback to 4002 or open immediately? | wait_for_touch |
-| Q2 | Next trade's SL: entry − sl_points, or the previous entry? | points |
 | Q5 | Part Two TP/SL as points or exact prices? | points (toggle in Single tab) |
 
 ---

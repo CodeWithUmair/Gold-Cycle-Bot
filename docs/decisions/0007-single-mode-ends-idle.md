@@ -1,6 +1,6 @@
 # ADR-0007: SINGLE ends in IDLE on TP or SL; CYCLE SL → STOPPED
 
-- **Status:** Accepted
+- **Status:** SINGLE part Accepted; "CYCLE SL → STOPPED" superseded by [ADR-0018](0018-cycle-rules-2026-11-16.md)
 - **Date:** 2026-11-11
 - **Spec refs:** CLAUDE.md §4.4, §4.9
 

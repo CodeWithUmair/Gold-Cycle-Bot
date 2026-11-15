@@ -38,7 +38,7 @@ For the trader using the dashboard. No code needed. Open **http://127.0.0.1:8000
 | OPENING | Price touched; the bot is sending the order (or waiting for spread / trading hours). |
 | IN POSITION (green) | A trade is open with TP and SL set on the broker's server. |
 | RESOLVING | The trade just closed; the bot is reading *why* (TP, SL, manual…). |
-| STOPPED (red) | The session ended (SL, stop price, you pressed stop…). Ready to Arm a new one. |
+| STOPPED (red) | The session ended (stop price, max cycles, you pressed stop…). Ready to Arm a new one. |
 
 ---
 
@@ -50,11 +50,11 @@ For the trader using the dashboard. No code needed. Open **http://127.0.0.1:8000
    current price. The bot never enters at the moment you arm. It waits for price to *touch* this level.
 4. **Lot**: same lot every cycle.
 5. **TP points / SL points**: 1 point = 1.00 of price (4000 → 4003 = 3 points). The grey text
-   under each box shows the actual price level.
-6. **Cycle gap (pts)**:
-   - *blank*: the next cycle starts right where the last TP hit (4000 → TP 4003 → next buy at 4003).
-   - *a number, e.g. 2*: the next entry moves by 2 points each cycle (4000 → 4002 → 4004). The bot
-     waits for price to touch it.
+   under each box shows the actual price level. SL is optional in Cycle mode: leave it blank and C1
+   has no SL (later trades still get their SL at the previous entry).
+6. **Cycle gap (pts)**: only used after an SL. It decides where the losing trade starts again:
+   - *blank*: at the same entry (BUY 4000, SL hit at 3997 → buy again when price is back at 4000).
+   - *a number, e.g. 2*: at that entry + 2 points in the trade direction (BUY → 4002).
 7. **Stop cycle at price** (optional): when price reaches it, the bot closes the open trade and stops.
 8. Look at **Preview**: the next 5 cycles exactly as the bot will place them (if each hits TP).
    Red messages must be fixed; amber ones are just warnings.
@@ -62,18 +62,19 @@ For the trader using the dashboard. No code needed. Open **http://127.0.0.1:8000
 
 What happens next, automatically:
 - Price touches the trigger → **C1** opens with TP and SL already attached on the broker.
-- **TP hit** → C1 complete → **C2** starts (at the TP, or at entry + gap) → C3 … and so on.
-- **SL hit** → the session **stops**. No new cycle, no reverse.
+- **TP hit** → C1 complete → **C2** opens straight away at that TP, with its SL at C1's entry → C3 … and so on.
+- **SL hit** → the bot keeps going: it waits for price to come back to the losing trade's entry
+  (+ gap, if set) and opens it again. Same direction, no reverse.
 - **Stop price reached** → the open trade is closed at market → session **stops**.
-- **Max cycles** (Advanced) reached → session **stops**.
+- **Max cycles** or **daily loss limit** (Advanced) reached → session **stops**.
 
-### Example (BUY, TP 3, SL 3, gap 2)
+### Example (BUY, TP 3, SL 3, gap blank)
 
-| Cycle | Entry | TP | SL |
-|---|---|---|---|
-| C1 | 4000 | 4003 | 3997 |
-| C2 | 4002 | 4005 | 3999 |
-| C3 | 4004 | 4007 | 4001 |
+| Cycle | Entry | TP | SL | Result |
+|---|---|---|---|---|
+| C1 | 4000 | 4003 | 3997 | TP → C2 opens at 4003 |
+| C2 | 4003 | 4006 | 4000 | SL at 4000 → wait for 4003 |
+| C3 | 4003 | 4006 | 4000 | (C2 again) |
 
 ---
 
@@ -108,8 +109,7 @@ What happens next, automatically:
 
 | Setting | Default | What it does |
 |---|---|---|
-| Gap entry | Wait for touch | With a gap: wait for price to reach the next entry, or open immediately |
-| Next SL | Entry − SL pts | Or put the next trade's SL at the previous entry |
+| Next SL | Previous entry | The client's rule. Or "Entry − SL pts" |
 | Levels from | Planned entry | TP/SL measured from your planned price (or from the actual fill) |
 | Trigger on | Bid | Which price must touch the trigger (bid = what the MT5 chart shows) |
 | Max slippage | 0.5 pts | If price ran further than this from the planned entry, don't chase; wait for another touch |

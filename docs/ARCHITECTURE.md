@@ -157,7 +157,7 @@ with a half-processed tick.
 | Close reason | CYCLE mode | SINGLE mode |
 |---|---|---|
 | TP | `_start_next_cycle` | IDLE (`COMPLETE`) |
-| SL | STOPPED `SL` ("C{n} hit SL at …, bot stopped") | IDLE (`COMPLETE`) |
+| SL | `_start_next_cycle(after_sl=True)` ("C{n} hit SL at …") | IDLE (`COMPLETE`) |
 | MANUAL (closed in MT5) | STOPPED `MANUAL_CLOSE` | same |
 | STOP_PRICE / KILL_SWITCH / DAILY_LOSS | STOPPED with that reason | same |
 | STOP_OUT / UNKNOWN | STOPPED, error level | same |
@@ -165,12 +165,14 @@ with a half-processed tick.
 **`_start_next_cycle`** checks, in order:
 1. `stop_after_cycle` → STOPPED `STOP_AFTER_CYCLE`.
 2. `max_cycles` reached → STOPPED `MAX_CYCLES`.
-3. Compute `next_entry(anchor_entry, cur_tp, gap)`. If it is at/beyond the stop price → STOPPED `STOP_PRICE`.
-4. Otherwise `cycle_no += 1`. If `opens_immediately` (gap blank, or `gap_entry_mode=immediate`) → OPENING (same tick). Else re-arm a trigger at the next entry → ARMED.
+3. Next entry: after TP = `cur_tp`; after SL = `reentry_after_sl(anchor_entry, gap)` (entry + sign·gap, blank = 0). If it is at/beyond the stop price → STOPPED `STOP_PRICE`.
+4. After TP only, `prev_entry = anchor_entry` (a retry after SL keeps the losing trade's SL reference). `cycle_no += 1`.
+   After TP → OPENING (same tick). After SL → re-arm a trigger at the re-entry → ARMED.
 
 **Levels:** TP/SL come from the planned entry (`level_anchor=planned`). With `fill`, the engine calls `modify_position`
 after the fill; if that fails it keeps the planned levels and toasts an error. `cycle_sl` with `sl_mode=previous_entry`
-uses the previous cycle's anchor entry, falling back to points when that entry isn't on the losing side.
+(the default) uses the previous cycle's anchor entry, falling back to points when that entry isn't on the losing side.
+No SL (`sl_points` blank, CYCLE only) is `None` in the engine and `0.0` at the broker and in the journal.
 
 ### Public actions
 

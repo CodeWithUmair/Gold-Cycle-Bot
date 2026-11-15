@@ -27,4 +27,4 @@ levels. Otherwise the bot stops, which is the safe failure.
 ## Code / tests
 - [mt5_gateway.py](../../backend/app/broker/mt5_gateway.py) `close_info`
 - [cycle_engine.py](../../backend/app/engine/cycle_engine.py) `_classify`, `_on_resolving`
-- Tests: `test_manual_close_stops_bot`, `test_sl_hit_stops_bot`, `test_buy_tp_chain_x3_with_gap`
+- Tests: `test_manual_close_stops_bot`, `test_sl_hit_blank_gap_restarts_at_same_entry`, `test_buy_tp_chain_x3_continues_from_tp`

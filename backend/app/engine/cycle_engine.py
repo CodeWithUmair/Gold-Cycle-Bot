@@ -43,7 +43,7 @@ class LivePosition:
     ticket: int
     fill_price: float
     tp: float
-    sl: float
+    sl: float  # 0.0 = no SL (MT5 convention)
     volume: float
     open_time: float
 
@@ -88,7 +88,7 @@ class CycleEngine:
         self.anchor_entry: float | None = None  # planned entry, or fill when level_anchor='fill'
         self.prev_entry: float | None = None
         self.cur_tp: float | None = None
-        self.cur_sl: float | None = None
+        self.cur_sl: float | None = None  # None = no SL
         self.trigger: TouchTrigger | None = None
         self.position: LivePosition | None = None
         self.cycle_row_id: int | None = None
@@ -204,16 +204,20 @@ class CycleEngine:
         slip = self.cfg.max_slippage_points if self.cfg else DEFAULT_SLIPPAGE_POINTS
         return max(1, round(levels.points_to_price(slip) / self.spec.point))
 
-    def _levels_for(self, entry: float) -> tuple[float, float]:
+    def _levels_for(self, entry: float) -> tuple[float, float | None]:
         cfg = self.cfg
         assert cfg
         tp = levels.tp_price(entry, cfg.direction, cfg.tp_pts)
-        sl = levels.cycle_sl(entry, cfg.direction, cfg.sl_pts, cfg.sl_mode, self.prev_entry)
+        sl = levels.cycle_sl(entry, cfg.direction, cfg.sl_points, cfg.sl_mode, self.prev_entry)
         return tp, sl
 
     def _rp(self, price: float) -> float:
         assert self.spec
         return levels.round_price(price, self.spec.digits)
+
+    def _rp_sl(self, sl: float | None) -> float:
+        """SL as sent to the broker / stored: rounded, 0.0 = no SL."""
+        return 0.0 if sl is None else self._rp(sl)
 
     def _start_of_day_ts(self) -> float:
         d = self.today()
@@ -226,12 +230,12 @@ class CycleEngine:
         cfg = self.cfg
         if not cfg or cfg.mode != Mode.CYCLE or self.state not in ACTIVE:
             return None
-        if self.anchor_entry is None or self.cur_tp is None:
-            if self.planned_entry is None:
-                return None
-            tp, _ = self._levels_for(self.planned_entry)
-            return levels.next_entry(self.planned_entry, tp, cfg.direction, cfg.cycle_gap)
-        return levels.next_entry(self.anchor_entry, self.cur_tp, cfg.direction, cfg.cycle_gap)
+        # Where the next cycle starts if this one closes on TP: at this cycle's TP.
+        if self.cur_tp is not None:
+            return self.cur_tp
+        if self.planned_entry is None:
+            return None
+        return self._levels_for(self.planned_entry)[0]
 
     def snapshot(self) -> dict[str, Any]:
         cfg = self.cfg
@@ -296,10 +300,11 @@ class CycleEngine:
             self._arm_trigger(tick)
             gap = "blank" if cfg.cycle_gap is None else f"{cfg.cycle_gap:g}"
             extra = f", gap {gap}, stop {cfg.stop_price or '—'}" if cfg.mode == Mode.CYCLE else ""
+            sl = "none" if cfg.sl_points is None else f"{cfg.sl_points:g}"
             self._set_state(
                 BotState.ARMED,
                 f"{cfg.mode} {cfg.direction} armed: C1 at {cfg.trigger_price:.2f}, lot {cfg.lot}, "
-                f"TP {cfg.tp_pts:g} / SL {cfg.sl_pts:g} pts{extra}",
+                f"TP {cfg.tp_pts:g} / SL {sl} pts{extra}",
                 toast=True,
             )
 
@@ -627,7 +632,7 @@ class CycleEngine:
             self.symbol,
             cfg.direction,
             volume,
-            self._rp(sl),
+            self._rp_sl(sl),
             self._rp(tp),
             self._deviation(),
             self.magic,
@@ -640,7 +645,7 @@ class CycleEngine:
         else:
             self._alert(f"C{self.cycle_no} order rejected: {res.message} ({res.retcode}) — retrying")
 
-    async def _on_filled(self, ticket: int, fill: float, tp: float, sl: float, volume: float) -> None:
+    async def _on_filled(self, ticket: int, fill: float, tp: float, sl: float | None, volume: float) -> None:
         cfg = self.cfg
         assert cfg and self.planned_entry is not None
         planned = self.planned_entry
@@ -649,7 +654,7 @@ class CycleEngine:
         if cfg.level_anchor == "fill":
             self.anchor_entry = fill
             tp, sl = self._levels_for(fill)
-            res = await self.broker.modify_position(self.symbol, ticket, self._rp(sl), self._rp(tp))
+            res = await self.broker.modify_position(self.symbol, ticket, self._rp_sl(sl), self._rp(tp))
             if not res.ok:
                 self._log(
                     f"C{self.cycle_no}: could not move TP/SL to fill-anchored levels ({res.message}); "
@@ -659,8 +664,8 @@ class CycleEngine:
                 )
                 self.anchor_entry = planned
                 tp, sl = self._levels_for(planned)
-        self.cur_tp, self.cur_sl = self._rp(tp), self._rp(sl)
-        self.position = LivePosition(ticket, fill, self.cur_tp, self.cur_sl, volume, self.now())
+        self.cur_tp, self.cur_sl = self._rp(tp), None if sl is None else self._rp(sl)
+        self.position = LivePosition(ticket, fill, self.cur_tp, self._rp_sl(sl), volume, self.now())
         self.floating = 0.0
         self.cycles_opened += 1
         assert self.session_id
@@ -672,7 +677,7 @@ class CycleEngine:
             fill_price=fill,
             slippage=slip,
             tp=self.cur_tp,
-            sl=self.cur_sl,
+            sl=self.position.sl,
             volume=volume,
             ticket=ticket,
             open_time=self.now(),
@@ -681,7 +686,7 @@ class CycleEngine:
         self._set_state(
             BotState.IN_POSITION,
             f"C{self.cycle_no} filled {cfg.direction} {volume} @ {fill:.2f} (planned {planned:.2f}, "
-            f"slip {slip:+.2f}) TP {self.cur_tp:.2f} SL {self.cur_sl:.2f}",
+            f"slip {slip:+.2f}) TP {self.cur_tp:.2f} SL {'none' if self.cur_sl is None else f'{self.cur_sl:.2f}'}",
             toast=True,
         )
 
@@ -690,7 +695,7 @@ class CycleEngine:
         cfg = self.cfg
         assert cfg and self.planned_entry is not None and self.session_id
         self.anchor_entry = self.planned_entry
-        self.cur_tp, self.cur_sl = p.tp, p.sl
+        self.cur_tp, self.cur_sl = p.tp, p.sl or None
         self.position = LivePosition(p.ticket, p.price_open, p.tp, p.sl, p.volume, p.time)
         self.cycles_opened += 1
         slip = round(levels.sign(cfg.direction) * levels.price_to_points(p.price_open - self.planned_entry), 2)
@@ -790,7 +795,8 @@ class CycleEngine:
             if cfg.mode == Mode.SINGLE:
                 self._finish_single(f"{result} — single trade complete", "warn")
             else:
-                self._stop("SL", f"C{n} hit SL at {price:.2f} ({pnl:+.2f}), bot stopped", "warn")
+                self._log(f"C{n} hit SL at {price:.2f} ({pnl:+.2f})", "warn", toast=True)
+                await self._start_next_cycle(tick, after_sl=True)
         elif reason == CloseReason.MANUAL:
             self._stop("MANUAL_CLOSE", f"C{n} was closed manually in MT5 ({pnl:+.2f}) — bot stopped", "warn")
         elif reason in (CloseReason.STOP_PRICE, CloseReason.KILL_SWITCH, CloseReason.DAILY_LOSS):
@@ -798,7 +804,9 @@ class CycleEngine:
         else:
             self._stop(reason, f"{result} — unexpected close, bot stopped", "error")
 
-    async def _start_next_cycle(self, tick: Tick) -> None:
+    async def _start_next_cycle(self, tick: Tick, after_sl: bool = False) -> None:
+        """After TP: the next trade opens at once at the previous TP, SL at the previous entry.
+        After SL: the losing trade is retried from its entry (+ gap), waiting for price to touch it."""
         cfg = self.cfg
         assert cfg and self.anchor_entry is not None and self.cur_tp is not None
         n = self.cycle_no
@@ -808,18 +816,22 @@ class CycleEngine:
         if cfg.max_cycles is not None and n >= cfg.max_cycles:
             self._stop("MAX_CYCLES", f"Max cycles ({cfg.max_cycles}) reached — bot stopped")
             return
-        nxt = levels.next_entry(self.anchor_entry, self.cur_tp, cfg.direction, cfg.cycle_gap)
+        if after_sl:
+            nxt = levels.reentry_after_sl(self.anchor_entry, cfg.direction, cfg.cycle_gap)
+        else:
+            nxt = self.cur_tp
         if levels.beyond_stop(nxt, cfg.direction, cfg.stop_price):
             self._stop("STOP_PRICE", f"Next entry {nxt:.2f} is at/beyond stop price {cfg.stop_price} — bot stopped")
             return
-        self.prev_entry = self.anchor_entry
+        if not after_sl:
+            self.prev_entry = self.anchor_entry  # a retry after SL keeps the losing trade's SL reference
         self.cycle_no = n + 1
         self.planned_entry = nxt
         self.anchor_entry = None
         self.cur_tp = self.cur_sl = None
         self.cycle_row_id = None
         self._last_order_attempt = 0.0
-        if levels.opens_immediately(cfg.cycle_gap, cfg.gap_entry_mode):
+        if not after_sl:
             self._set_state(BotState.OPENING, f"C{self.cycle_no} opening at market (planned {nxt:.2f})")
             await self._on_opening(tick)
         else:

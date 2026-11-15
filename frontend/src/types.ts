@@ -42,7 +42,6 @@ export interface CycleConfig {
   sl_price: number | null
   cycle_gap: number | null
   stop_price: number | null
-  gap_entry_mode: 'wait_for_touch' | 'immediate'
   sl_mode: 'points' | 'previous_entry'
   level_anchor: 'planned' | 'fill'
   trigger_price_side: 'bid' | 'ask' | 'mid'
@@ -116,7 +115,7 @@ export interface PlannedCycle {
   cycle: number
   entry: number
   tp: number
-  sl: number
+  sl: number | null
   lot: number
 }
 

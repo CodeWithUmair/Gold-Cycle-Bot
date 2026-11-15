@@ -68,7 +68,7 @@ export function Journal({ rows, sessionPnl, currency, onOpenLog }: { rows: Cycle
                   <td className="text-right">{fmt(r.fill_price, 3)}</td>
                   <td className={`text-right ${(r.slippage ?? 0) > 0 ? 'text-warn' : 'text-muted'}`}>{fmt(r.slippage)}</td>
                   <td className="text-right text-up/90">{fmt(r.tp)}</td>
-                  <td className="text-right text-down/90">{fmt(r.sl)}</td>
+                  <td className="text-right text-down/90">{fmt(r.sl || null)}</td>
                   <td>
                     {r.close_reason ? (
                       <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${RESULT_CLS[r.close_reason] ?? 'bg-warn/15 text-warn'}`}>

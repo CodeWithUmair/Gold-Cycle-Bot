@@ -15,7 +15,6 @@ interface FormState {
   slPrice: string
   gap: string
   stop: string
-  gapEntryMode: CycleConfig['gap_entry_mode']
   slMode: CycleConfig['sl_mode']
   levelAnchor: CycleConfig['level_anchor']
   triggerSide: CycleConfig['trigger_price_side']
@@ -37,8 +36,7 @@ const DEFAULT_FORM: FormState = {
   slPrice: '',
   gap: '',
   stop: '',
-  gapEntryMode: 'wait_for_touch',
-  slMode: 'points',
+  slMode: 'previous_entry',
   levelAnchor: 'planned',
   triggerSide: 'bid',
   maxSlip: '0.5',
@@ -48,7 +46,7 @@ const DEFAULT_FORM: FormState = {
   hours: '',
 }
 
-const STORE_KEY = 'goldcycle.form.v1'
+const STORE_KEY = 'goldcycle.form.v2' // v2: cycle rules changed 2026-11-16 (SL default, no gap entry mode)
 
 const num = (s: string): number | null => {
   const t = s.trim()
@@ -71,7 +69,6 @@ function toConfig(mode: Mode, f: FormState): Record<string, unknown> {
     sl_price: priceInput ? num(f.slPrice) : null,
     cycle_gap: mode === 'CYCLE' ? num(f.gap) : null,
     stop_price: mode === 'CYCLE' ? num(f.stop) : null,
-    gap_entry_mode: f.gapEntryMode,
     sl_mode: f.slMode,
     level_anchor: f.levelAnchor,
     trigger_price_side: f.triggerSide,
@@ -97,7 +94,6 @@ function fromConfig(c: CycleConfig): FormState {
     slPrice: s(c.sl_price),
     gap: s(c.cycle_gap),
     stop: s(c.stop_price),
-    gapEntryMode: c.gap_entry_mode,
     slMode: c.sl_mode,
     levelAnchor: c.level_anchor,
     triggerSide: c.trigger_price_side,
@@ -291,15 +287,16 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
               </p>
             </div>
             <div>
-              <label className="label text-down/80">{priceMode ? 'SL price' : 'SL points'}</label>
+              <label className="label text-down/80">{priceMode ? 'SL price' : mode === 'CYCLE' ? 'SL points (optional)' : 'SL points'}</label>
               <input
                 className="field"
                 inputMode="decimal"
                 value={priceMode ? f.slPrice : f.sl}
                 onChange={(e) => set(priceMode ? 'slPrice' : 'sl', e.target.value)}
+                placeholder={mode === 'CYCLE' ? 'none' : undefined}
               />
               <p className="num mt-1 text-xs text-faint">
-                {first ? (priceMode ? `= ${Math.abs(first.entry - first.sl).toFixed(2)} pts` : `@ ${fmt(first.sl, 2)}`) : ' '}
+                {first ? (priceMode ? `= ${fmt(first.sl === null ? null : Math.abs(first.entry - first.sl), 2)} pts` : `@ ${fmt(first.sl, 2)}`) : ' '}
               </p>
             </div>
           </div>
@@ -308,7 +305,7 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="label">Cycle gap (pts)</label>
-                <input className="field" inputMode="decimal" value={f.gap} onChange={(e) => set('gap', e.target.value)} placeholder="blank = from TP" />
+                <input className="field" inputMode="decimal" value={f.gap} onChange={(e) => set('gap', e.target.value)} placeholder="after SL: blank = same entry" />
               </div>
               <div>
                 <label className="label text-warn/80">Stop cycle at price</label>
@@ -334,8 +331,6 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
                 <div className="grid grid-cols-2 gap-3 rounded-lg border border-line bg-bg/50 p-3">
                   {mode === 'CYCLE' && (
                     <>
-                      <Select label="Gap entry (Q1)" value={f.gapEntryMode} onChange={(x) => set('gapEntryMode', x)}
-                        options={[['wait_for_touch', 'Wait for touch'], ['immediate', 'Immediate']]} />
                       <Select label="Next SL (Q2)" value={f.slMode} onChange={(x) => set('slMode', x)}
                         options={[['points', 'Entry − SL pts'], ['previous_entry', 'Previous entry']]} />
                     </>
@@ -386,7 +381,7 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
                     <td className="py-1 text-muted">C{c.cycle}</td>
                     <td className="text-right">{c.entry.toFixed(2)}</td>
                     <td className="text-right text-up">{c.tp.toFixed(2)}</td>
-                    <td className="text-right text-down">{c.sl.toFixed(2)}</td>
+                    <td className="text-right text-down">{fmt(c.sl, 2)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -444,10 +439,11 @@ function HowItWorks({ mode }: { mode: Mode }) {
   const steps =
     mode === 'CYCLE'
       ? [
-          ['Set the levels', 'Direction, trigger price, lot, TP/SL points, gap (blank = next cycle starts at the TP) and an optional stop price.'],
+          ['Set the levels', 'Direction, trigger price, lot, TP points, optional SL points, gap (used after an SL) and an optional stop price.'],
           ['Check the preview', 'The table below shows the next 5 cycles exactly as the bot will place them.'],
-          ['Arm', 'The bot waits for price to touch the trigger, opens C1 with TP/SL, and chains C2, C3… after every TP.'],
-          ['It ends by itself', 'On SL, stop price, or max cycles. Or press Stop. Then edit the form and Arm again for a new session.'],
+          ['Arm', 'The bot waits for price to touch the trigger and opens C1. On TP the next trade opens at once at that TP, with SL at the previous entry.'],
+          ['After an SL', 'The bot waits for price to return to the losing trade\'s entry (+ gap, if set) and starts that trade again.'],
+          ['It ends by itself', 'On stop price, max cycles or the daily loss limit. Or press Stop. Then edit the form and Arm again for a new session.'],
         ]
       : [
           ['Set the trade', 'Direction, trigger price, lot and TP/SL (in points, or switch to exact prices).'],
@@ -517,7 +513,7 @@ function RunningCard({ engine, floating, currency, digits, mode }: { engine: Eng
       {p && (
         <div className="num grid grid-cols-3 gap-2 text-xs">
           <Kv k="Fill" v={fmt(p.fill_price, digits)} />
-          <Kv k="TP / SL" v={`${fmt(p.tp, 2)} / ${fmt(p.sl, 2)}`} />
+          <Kv k="TP / SL" v={`${fmt(p.tp, 2)} / ${fmt(p.sl || null, 2)}`} />
           <Kv k="Floating" v={<span className={pnlColor(floating)}>{fmtMoney(floating, '')}</span>} />
         </div>
       )}

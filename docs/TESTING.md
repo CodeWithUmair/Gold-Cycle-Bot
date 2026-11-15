@@ -24,9 +24,9 @@ Status at end of Session 1: **45 passed**, mypy clean (30 files), ruff clean, fr
 
 | Test | Proves |
 |---|---|
-| `test_client_tables_gap_2[BUY/SELL]` | Client's §4.1 tables exactly: entries, TPs, "next order" = TP, next order's SL = this entry |
-| `test_gap_blank_buy_continues_from_tp` | Gap blank: C2 entry 4003, TP 4006, SL 4000 |
-| `test_gap_blank_sell_continues_from_tp` | Same for SELL |
+| `test_client_cycle_continues_from_tp[gap/BUY/SELL]` | Client's §4.1 tables exactly (gap blank and 2): C2 entry = C1 TP, C2 SL = C1 entry |
+| `test_reentry_after_sl` | After SL: losing entry (gap blank) or entry ± gap |
+| `test_sl_optional_in_cycle_mode` | No SL on C1; later SLs at the previous entry; SINGLE still needs an SL |
 | `test_sl_mode_previous_entry_equals_points_for_3_3` | Q2: both SL modes agree when tp = sl = 3 |
 | `test_sl_mode_previous_entry_differs_when_tp_ne_sl` | Q2: previous-entry SL with tp 5 / sl 3 |
 | `test_ladder_stops_before_stop_price` | Preview stops at the stop price |
@@ -43,8 +43,9 @@ Status at end of Session 1: **45 passed**, mypy clean (30 files), ruff clean, fr
 
 | §10.2 scenario | Test(s) |
 |---|---|
-| TP chain ×3 | `test_buy_tp_chain_x3_with_gap`, `test_sell_tp_chain_with_gap`, `test_gap_blank_opens_next_cycle_immediately_from_tp` |
-| SL hit → bot stops | `test_sl_hit_stops_bot` |
+| TP chain ×3 | `test_buy_tp_chain_x3_continues_from_tp`, `test_sell_tp_chain_continues_from_tp`, `test_gap_blank_opens_next_cycle_immediately_from_tp` |
+| SL hit → retry the losing trade | `test_sl_hit_blank_gap_restarts_at_same_entry`, `test_sl_hit_with_gap_restarts_from_entry_plus_gap`, `test_sl_after_tp_retries_same_trade` |
+| Cycle with no SL | `test_cycle_mode_without_sl` |
 | Stop price mid-cycle → trade closed + stop (incl. rejected close retried every tick) | `test_stop_price_mid_cycle_closes_trade_and_stops` |
 | Next entry beyond stop price | `test_next_entry_beyond_stop_price_stops_chain` |
 | Price already past trigger at arm → wait for return | `test_price_past_trigger_at_arm_waits_for_return`, `test_price_exactly_at_trigger_at_arm_does_not_enter` |
@@ -66,8 +67,8 @@ Status at end of Session 1: **45 passed**, mypy clean (30 files), ruff clean, fr
 |---|---|
 | `test_restart_in_position_waits_for_resume_then_reattaches` | `resume_on_restart=false` → STOPPED + resumable; ignores ticks; Resume reattaches the same ticket; chain continues |
 | `test_restart_survives_second_restart_before_resume` | `resume_state` survives a second restart |
-| `test_position_closed_on_tp_while_down_continues_chain` | Closed on TP while down → resolved from history → C2 armed |
-| `test_position_closed_on_sl_while_down_stops` | Closed on SL while down → STOPPED `SL` |
+| `test_position_closed_on_tp_while_down_continues_chain` | Closed on TP while down → resolved from history → C2 opened at the TP |
+| `test_position_closed_on_sl_while_down_rearms` | Closed on SL while down → re-armed at the losing entry + gap |
 | `test_restart_during_opening_never_duplicates` | Order filled but not recorded → attach, **no duplicate order** |
 | `test_no_unfinished_session_is_a_noop` | Clean start |
 

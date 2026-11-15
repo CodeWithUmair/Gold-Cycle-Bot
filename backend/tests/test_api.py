@@ -67,7 +67,7 @@ def test_validate_arm_stop_flow(client: TestClient) -> None:
 
     good = client.post("/api/bot/validate", json=cfg).json()
     assert good["errors"] == []
-    assert [c["entry"] for c in good["ladder"]] == [4100, 4102, 4104, 4106, 4108]
+    assert [c["entry"] for c in good["ladder"]] == [4100, 4103, 4106, 4109, 4112]
 
     r = client.post("/api/bot/arm", json=cfg, headers=h)
     assert r.status_code == 200, r.text

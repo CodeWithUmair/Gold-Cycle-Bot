@@ -53,11 +53,10 @@ class CycleConfig(BaseModel):
     tp_price: float | None = Field(default=None, gt=0)
     sl_price: float | None = Field(default=None, gt=0)
 
-    # CYCLE only
+    # CYCLE only. sl_points may be blank in CYCLE mode (no SL on C1). cycle_gap only applies after an SL.
     cycle_gap: float | None = Field(default=None, ge=0)
     stop_price: float | None = Field(default=None, gt=0)
-    gap_entry_mode: Literal["wait_for_touch", "immediate"] = "wait_for_touch"  # Q1
-    sl_mode: Literal["points", "previous_entry"] = "points"  # Q2
+    sl_mode: Literal["points", "previous_entry"] = "previous_entry"  # Q2 (client: SL at the previous entry)
 
     # execution
     level_anchor: Literal["planned", "fill"] = "planned"
@@ -87,8 +86,10 @@ class CycleConfig(BaseModel):
             # Engine only works in points: derive them from the exact prices.
             self.tp_points = round(abs(self.tp_price - self.trigger_price), 6)
             self.sl_points = round(abs(self.trigger_price - self.sl_price), 6)
-        elif self.tp_points is None or self.sl_points is None:
-            raise ValueError("tp_points and sl_points are required")
+        elif self.tp_points is None:
+            raise ValueError("tp_points is required")
+        elif self.sl_points is None and self.mode == Mode.SINGLE:
+            raise ValueError("sl_points is required in SINGLE mode")
 
         if self.mode == Mode.SINGLE:
             self.cycle_gap = None
@@ -111,8 +112,3 @@ class CycleConfig(BaseModel):
     def tp_pts(self) -> float:
         assert self.tp_points is not None
         return self.tp_points
-
-    @property
-    def sl_pts(self) -> float:
-        assert self.sl_points is not None
-        return self.sl_points

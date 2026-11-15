@@ -85,7 +85,7 @@ RDP into the VPS and open **http://127.0.0.1:8000**. For remote access, use Tail
 
 | Control | What it does |
 |---|---|
-| **Cycle** tab | Part One: trigger price, direction, lot, TP/SL points, cycle gap (blank = continue from TP), stop price |
+| **Cycle** tab | Part One: trigger price, direction, lot, TP points, SL points (optional), cycle gap (used after an SL), stop price |
 | **Single** tab | Part Two: one trade, then back to IDLE |
 | Preview ladder | Next 5 planned cycles computed by the server from your inputs, shown before arming |
 | **Arm** | Starts watching the trigger. If price is already past or at the trigger, the bot waits for it to come back and touch. |
@@ -100,7 +100,8 @@ Other parts of the page:
 - **Log drawer:** the full event history.
 
 Fixed rules (confirmed with the client):
-- SL hit → the bot stops.
+- TP hit → the next trade opens at once at that TP, with its SL at the previous entry.
+- SL hit → the bot does **not** stop. It waits for price to return to the losing trade's entry (+ gap, if set) and opens that trade again.
 - Stop price reached → the open trade closes immediately and the bot stops.
 - Position closed by hand in MT5 → the bot stops.
 
@@ -118,12 +119,11 @@ The broker's stops/freeze level is checked before arming. TP/SL that are too clo
 
 ### Open questions: switches in the form
 
-Q1 and Q2 are in the Cycle tab's Advanced section; Q5 is the "TP/SL in points | price" toggle on the Single tab.
+Q1 is obsolete; Q2 and Q6 are answered (2026-11-16, [ADR-0018](docs/decisions/0018-cycle-rules-2026-11-16.md)). The Q2 switch stays in the Cycle tab's Advanced section. Q5 is the "TP/SL in points | price" toggle on the Single tab. Q6: after an SL the gap moves the re-entry in the selected direction (BUY 4000 → 4002).
 
 | # | Question | Switch | Default |
 |---|---|---|---|
-| Q1 | With a gap, does the next cycle wait for a pullback or open immediately? | `gap_entry_mode` | `wait_for_touch` |
-| Q2 | Next trade's SL: entry − SL points, or the previous entry? | `sl_mode` | `points` |
+| Q2 | Next trade's SL: entry − SL points, or the previous entry? **Answered: previous entry.** | `sl_mode` | `previous_entry` |
 | Q5 | Single-mode TP/SL as points or exact prices? | `tp_sl_input` | `points` |
 
 "Point" means 1.00 of price (4000 → 4003 = 3 points), not MT5's 0.01 point.

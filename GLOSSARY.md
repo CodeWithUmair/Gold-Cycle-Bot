@@ -53,24 +53,24 @@ If the price is exactly on the trigger at arm time it does **not** fire. It wait
 
 **Cycle** — one trade from open to close. C1, C2, C3… Only **one trade is open at a time**.
 
-**Cycle gap ("Cycle Gape" in the client's sheet)** — how far the next cycle's entry moves, in points.
-- **Blank** → the next entry equals the previous TP. Price is already there, so the bot opens immediately.
-- **Set** (e.g. 2) → next entry = previous entry ± 2. The bot waits for price to touch it (open question Q1).
+**Cycle gap ("Cycle Gape" in the client's sheet)** — used **only after an SL**: where the retry of the losing trade starts, in points.
+- **Blank** → re-enter at the losing trade's entry (BUY 4000, SL 3997 → next buy at 4000).
+- **Set** (e.g. 2) → re-enter at the losing entry + 2 in the trade direction (BUY → 4002, SELL → 3998). Confirmed by the client.
+- In both cases the bot waits for price to touch the re-entry level. After a TP the gap is ignored: the next trade opens at the TP.
 
 **Stop price ("Stop bot cycle at position")** — a hard ceiling (BUY) or floor (SELL). When reached, the bot **closes the open trade at market** and stops.
 It also stops if the *next* entry would be at or beyond the stop price.
 
-**Client's worked BUY example** (tp 3, sl 3, gap 2):
+**Client's cycle, BUY example** (tp 3, sl 3; confirmed 2026-11-16):
 
-| Cycle | Entry | TP | Next order | SL |
-|---|---|---|---|---|
-| C1 | 4000 | 4003 | 4003 | 4000 |
-| C2 | 4002 | 4005 | 4005 | 4002 |
-| C3 | 4004 | 4007 | 4007 | 4004 |
+| Cycle | Entry | TP | SL |
+|---|---|---|---|
+| C1 | 4000 | 4003 | 3997 |
+| C2 | 4003 | 4006 | 4000 |
+| C3 | 4006 | 4009 | 4003 |
 
-Read it as: C1 buys at 4000 with TP 4003. When TP hits, cycle 1 is done. The "Next order / SL" columns show that a
-trade placed at 4003 would have its SL at 4000 (the previous entry). With gap 2, the next entry is 4002, so C2 waits
-for a 1-point pullback.
+Read it as: C1 buys at 4000 with TP 4003. When TP hits, C1 closes and C2 opens straight away at 4003, with its SL at
+4000 (the previous entry). If C2's SL hits at 4000, the bot waits for price to come back to 4003 (+ gap) and buys again.
 
 **Modes** — **CYCLE** ("Part One" in the sheet) repeats trades up the ladder. **SINGLE** ("Part Two") is one trade, then back to IDLE.
 

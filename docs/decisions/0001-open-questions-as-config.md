@@ -1,6 +1,6 @@
 # ADR-0001: Open questions Q1/Q2/Q5 shipped as config switches with spec defaults
 
-- **Status:** Accepted
+- **Status:** Q1 and Q2 superseded by [ADR-0018](0018-cycle-rules-2026-11-16.md) (client answered 2026-11-16). Q5 still Accepted.
 - **Date:** 2026-11-11
 - **Spec refs:** CLAUDE.md §4.3, §3, §12
 

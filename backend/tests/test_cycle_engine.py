@@ -7,37 +7,37 @@ from app.engine.models import BotState, Direction, Mode
 from tests.helpers import Harness, run
 
 
-def test_buy_tp_chain_x3_with_gap() -> None:
+def test_buy_tp_chain_x3_continues_from_tp() -> None:
     async def scenario() -> None:
         h = Harness(start=3990)
-        await h.arm(cycle_gap=2)
+        await h.arm(cycle_gap=2)  # gap is ignored on TP
         await h.px(3995, 3999.9)
         assert h.engine.state == BotState.ARMED and not h.sim.open_positions
         await h.px(4000)  # C1 opens
         assert h.engine.state == BotState.IN_POSITION
-        await h.px(4003)  # C1 TP -> C2 armed at 4002 (wait for pullback, Q1 default)
-        assert h.engine.state == BotState.ARMED and h.engine.planned_entry == 4002
-        await h.px(4002.5, 4002, 4005, 4004, 4007)
+        await h.px(4003)  # C1 TP -> C2 opens at once at 4003, SL at C1's entry
+        assert h.engine.state == BotState.IN_POSITION and h.engine.planned_entry == 4003
+        await h.px(4006, 4009)
         rows = h.cycles()
-        assert [r["planned_entry"] for r in rows] == [4000, 4002, 4004]
-        assert [(r["tp"], r["sl"]) for r in rows] == [(4003, 3997), (4005, 3999), (4007, 4001)]
-        assert [r["close_reason"] for r in rows] == ["TP", "TP", "TP"]
-        assert all(r["pnl"] > 0 for r in rows)
-        assert h.engine.state == BotState.ARMED and h.engine.cycle_no == 4 and h.engine.planned_entry == 4006
-        assert h.engine.session_pnl == pytest.approx(sum(r["pnl"] for r in rows))
+        assert [r["planned_entry"] for r in rows] == [4000, 4003, 4006, 4009]
+        assert [(r["tp"], r["sl"]) for r in rows[:3]] == [(4003, 3997), (4006, 4000), (4009, 4003)]
+        assert [r["close_reason"] for r in rows[:3]] == ["TP", "TP", "TP"]
+        assert all(r["pnl"] > 0 for r in rows[:3])
+        assert h.engine.state == BotState.IN_POSITION and h.engine.cycle_no == 4
+        assert h.engine.session_pnl == pytest.approx(sum(r["pnl"] for r in rows[:3]))
 
     run(scenario())
 
 
-def test_sell_tp_chain_with_gap() -> None:
+def test_sell_tp_chain_continues_from_tp() -> None:
     async def scenario() -> None:
         h = Harness(start=4010)
         await h.arm(direction=Direction.SELL, cycle_gap=2)
-        await h.px(4000, 3996.8, 3998, 3994.8, 3996, 3992.8)  # SELL TP checks ask (bid + 0.2)
+        await h.px(4000, 3996.8, 3993.8, 3990.8)  # SELL TP checks ask (bid + 0.2)
         rows = h.cycles()
-        assert [r["planned_entry"] for r in rows] == [4000, 3998, 3996]
-        assert [(r["tp"], r["sl"]) for r in rows] == [(3997, 4003), (3995, 4001), (3993, 3999)]
-        assert [r["close_reason"] for r in rows] == ["TP", "TP", "TP"]
+        assert [r["planned_entry"] for r in rows] == [4000, 3997, 3994, 3991]
+        assert [(r["tp"], r["sl"]) for r in rows[:3]] == [(3997, 4003), (3994, 4000), (3991, 3997)]
+        assert [r["close_reason"] for r in rows[:3]] == ["TP", "TP", "TP"]
 
     run(scenario())
 
@@ -55,16 +55,62 @@ def test_gap_blank_opens_next_cycle_immediately_from_tp() -> None:
     run(scenario())
 
 
-def test_sl_hit_stops_bot() -> None:
+def test_sl_hit_blank_gap_restarts_at_same_entry() -> None:
     async def scenario() -> None:
         h = Harness()
-        await h.arm()
-        await h.px(4000, 3998, 3997)
-        assert h.engine.state == BotState.STOPPED and h.engine.stop_reason == "SL"
+        await h.arm(cycle_gap=None)
+        await h.px(4000, 3998, 3997)  # C1 SL
         assert h.cycles()[0]["close_reason"] == "SL"
-        assert any("C1 hit SL at 3997.00" in t and "bot stopped" in t for t in h.toasts())
-        await h.px(4000, 4005)  # never re-enters
-        assert not h.sim.open_positions and len(h.cycles()) == 1
+        assert any("C1 hit SL at 3997.00" in t for t in h.toasts())
+        assert h.engine.state == BotState.ARMED and h.engine.cycle_no == 2 and h.engine.planned_entry == 4000
+        await h.px(3999)
+        assert not h.sim.open_positions  # waits for price to come back to 4000
+        await h.px(4000)
+        c2 = h.cycles()[1]
+        assert h.engine.state == BotState.IN_POSITION
+        assert (c2["planned_entry"], c2["tp"], c2["sl"]) == (4000, 4003, 3997)
+
+    run(scenario())
+
+
+def test_sl_hit_with_gap_restarts_from_entry_plus_gap() -> None:
+    async def scenario() -> None:
+        h = Harness()
+        await h.arm(cycle_gap=2)
+        await h.px(4000, 3997)  # C1 SL -> C2 at 4000 + 2
+        assert h.engine.state == BotState.ARMED and h.engine.planned_entry == 4002
+        await h.px(4002)
+        c2 = h.cycles()[1]
+        assert (c2["planned_entry"], c2["tp"], c2["sl"]) == (4002, 4005, 3999)
+
+    run(scenario())
+
+
+def test_sl_after_tp_retries_same_trade() -> None:
+    async def scenario() -> None:
+        h = Harness()
+        await h.arm(cycle_gap=None)
+        await h.px(4000, 4003)  # C2 at 4003, SL 4000
+        await h.px(4000)  # C2 SL
+        assert h.engine.state == BotState.ARMED and h.engine.planned_entry == 4003
+        await h.px(4003)
+        c3 = h.cycles()[2]
+        assert (c3["planned_entry"], c3["tp"], c3["sl"]) == (4003, 4006, 4000)
+
+    run(scenario())
+
+
+def test_cycle_mode_without_sl() -> None:
+    async def scenario() -> None:
+        h = Harness()
+        await h.arm(cycle_gap=None, sl_points=None)
+        await h.px(4000, 3990)  # no SL on C1: price can fall without closing it
+        assert h.engine.state == BotState.IN_POSITION
+        (p,) = h.sim.open_positions.values()
+        assert p.sl == 0
+        await h.px(4003)  # C1 TP -> C2 gets SL at C1's entry
+        c1, c2 = h.cycles()
+        assert c1["sl"] == 0 and (c2["planned_entry"], c2["sl"]) == (4003, 4000)
 
     run(scenario())
 
@@ -90,8 +136,8 @@ def test_stop_price_mid_cycle_closes_trade_and_stops() -> None:
 def test_next_entry_beyond_stop_price_stops_chain() -> None:
     async def scenario() -> None:
         h = Harness()
-        await h.arm(cycle_gap=5, stop_price=4004)  # C2 would be 4005 >= 4004
-        await h.px(4000, 4003)
+        await h.arm(cycle_gap=5, stop_price=4004.5)  # after SL, C2 would be 4005 >= 4004.5
+        await h.px(4000, 3997)
         assert h.engine.state == BotState.STOPPED and h.engine.stop_reason == "STOP_PRICE"
         assert len(h.cycles()) == 1
 

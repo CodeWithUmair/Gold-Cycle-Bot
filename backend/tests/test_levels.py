@@ -1,7 +1,7 @@
-"""Client's worked examples (CLAUDE.md §4.1) as acceptance tests.
+"""Client's cycle rule (CLAUDE.md §4.1, confirmed 2026-11-16) as acceptance tests.
 
-Table columns: Entry | TP | Next order | SL, where "Next order" is the price the next
-trade is placed from (= this cycle's TP) and "SL" is that next trade's SL (= this entry).
+C1 enters at 4000, TP 4003. On TP the next trade opens at 4003 (previous TP) with its SL at
+4000 (previous entry). The gap only matters after an SL.
 """
 
 from datetime import time
@@ -13,8 +13,8 @@ from app.engine import levels, risk
 from app.engine.models import CycleConfig, Direction, Mode
 from app.engine.trigger import TouchTrigger
 
-BUY_GAP2 = [(4000, 4003, 4003, 4000), (4002, 4005, 4005, 4002), (4004, 4007, 4007, 4004)]
-SELL_GAP2 = [(4000, 3997, 3997, 4000), (3998, 3995, 3995, 3998), (3996, 3993, 3993, 3996)]
+BUY_CHAIN = [(4000, 4003, 3997), (4003, 4006, 4000), (4006, 4009, 4003)]
+SELL_CHAIN = [(4000, 3997, 4003), (3997, 3994, 4000), (3994, 3991, 3997)]
 
 
 def cfg(direction: Direction, gap: float | None, **kw: object) -> CycleConfig:
@@ -25,30 +25,35 @@ def cfg(direction: Direction, gap: float | None, **kw: object) -> CycleConfig:
     return CycleConfig.model_validate(base)
 
 
-@pytest.mark.parametrize(("direction", "table"), [(Direction.BUY, BUY_GAP2), (Direction.SELL, SELL_GAP2)])
-def test_client_tables_gap_2(direction: Direction, table: list[tuple[int, int, int, int]]) -> None:
-    ladder = levels.preview_ladder(cfg(direction, 2), 3)
-    assert [c.entry for c in ladder] == [row[0] for row in table]
-    assert [c.tp for c in ladder] == [row[1] for row in table]
-    for c, (entry, _tp, next_order, next_sl) in zip(ladder, table, strict=True):
-        assert c.tp == next_order
-        # The next order's SL (placed at this cycle's TP) lands on this cycle's entry.
-        assert levels.sl_price(next_order, direction, 3) == next_sl == entry
+@pytest.mark.parametrize("gap", [None, 2])
+@pytest.mark.parametrize(("direction", "table"), [(Direction.BUY, BUY_CHAIN), (Direction.SELL, SELL_CHAIN)])
+def test_client_cycle_continues_from_tp(
+    direction: Direction, table: list[tuple[int, int, int]], gap: float | None
+) -> None:
+    # The gap does not move the chain on TP.
+    ladder = levels.preview_ladder(cfg(direction, gap), 3)
+    assert [(c.entry, c.tp, c.sl) for c in ladder] == table
 
 
-def test_gap_blank_buy_continues_from_tp() -> None:
-    # C1 TP 4003 -> C2 entry 4003, TP 4006, SL 4000
-    ladder = levels.preview_ladder(cfg(Direction.BUY, None), 3)
-    assert [(c.entry, c.tp, c.sl) for c in ladder] == [(4000, 4003, 3997), (4003, 4006, 4000), (4006, 4009, 4003)]
+def test_reentry_after_sl() -> None:
+    # Blank gap: start again where the losing trade started. Gap: shifted in the trade direction (Q6, confirmed).
+    assert levels.reentry_after_sl(4000, Direction.BUY, None) == 4000
+    assert levels.reentry_after_sl(4000, Direction.BUY, 2) == 4002
+    assert levels.reentry_after_sl(4000, Direction.SELL, 2) == 3998
 
 
-def test_gap_blank_sell_continues_from_tp() -> None:
-    ladder = levels.preview_ladder(cfg(Direction.SELL, None), 3)
-    assert [(c.entry, c.tp, c.sl) for c in ladder] == [(4000, 3997, 4003), (3997, 3994, 4000), (3994, 3991, 3997)]
+def test_sl_optional_in_cycle_mode() -> None:
+    ladder = levels.preview_ladder(cfg(Direction.BUY, None, sl_points=None), 3)
+    assert [(c.entry, c.sl) for c in ladder] == [(4000, None), (4003, 4000), (4006, 4003)]
+    assert [c.sl for c in levels.preview_ladder(cfg(Direction.BUY, None, sl_points=None, sl_mode="points"), 3)] == [
+        None, None, None,
+    ]  # fmt: skip
+    with pytest.raises(ValueError):
+        CycleConfig(mode=Mode.SINGLE, direction=Direction.BUY, trigger_price=4000, lot=0.01, tp_points=3)
 
 
 def test_sl_mode_previous_entry_equals_points_for_3_3() -> None:
-    a = levels.preview_ladder(cfg(Direction.BUY, None), 4)
+    a = levels.preview_ladder(cfg(Direction.BUY, None, sl_mode="points"), 4)
     b = levels.preview_ladder(cfg(Direction.BUY, None, sl_mode="previous_entry"), 4)
     assert [c.sl for c in a[1:]] == [c.sl for c in b[1:]]
 
@@ -59,8 +64,8 @@ def test_sl_mode_previous_entry_differs_when_tp_ne_sl() -> None:
 
 
 def test_ladder_stops_before_stop_price() -> None:
-    ladder = levels.preview_ladder(cfg(Direction.BUY, 2, stop_price=4005), 5)
-    assert [c.entry for c in ladder] == [4000, 4002, 4004]
+    ladder = levels.preview_ladder(cfg(Direction.BUY, 2, stop_price=4007), 5)
+    assert [c.entry for c in ladder] == [4000, 4003, 4006]
 
 
 def test_ladder_respects_max_cycles_and_single_mode() -> None:

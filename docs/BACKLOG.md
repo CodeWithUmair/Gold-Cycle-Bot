@@ -8,7 +8,7 @@ When an item is done, move it to the session log in [HANDOFF.md](../HANDOFF.md) 
 
 | # | Item | Notes |
 |---|---|---|
-| B1 | Get client answers to Q1, Q2, Q5 | Defaults are wait_for_touch / points / points ([ADR-0001](decisions/0001-open-questions-as-config.md)). Update CLAUDE.md §12 + write a new ADR. |
+| B1 | Get client answer to Q5 | Q1/Q2/Q6 answered 2026-11-16 ([ADR-0018](decisions/0018-cycle-rules-2026-11-16.md)). Default: Q5 points. Update CLAUDE.md §12 + write a new ADR. |
 | B2 | Full trading session on the **Exness demo with DRY_RUN=false** on the client's VPS | Spec §10.3. Watch: requotes (retcode 10004/10020/10021), slippage column, spread waits, close-reason accuracy. |
 | B3 | Confirm what "Point" means against the client's real numbers once more | `POINT_SIZE = 1.0` in [levels.py](../backend/app/engine/levels.py). XAUUSDm has 3 digits, so a "point" is 1000 MT5 points. |
 | B4 | VPS install dry-run following README exactly | Python 3.11+ (dev machine ran 3.14), Node, NSSM, MT5 auto-login after reboot, `Algo Trading` button on. |

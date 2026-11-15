@@ -56,13 +56,14 @@ def validate_config(cfg: CycleConfig, spec: SymbolSpec, tick: Tick | None) -> tu
     min_dist_price = max(spec.stops_level, spec.freeze_level) * spec.point
     if min_dist_price > 0:
         min_pts = levels.price_to_points(min_dist_price)
-        for name, pts in (("TP", cfg.tp_pts), ("SL", cfg.sl_pts)):
-            if levels.points_to_price(pts) < min_dist_price:
+        for name, pts in (("TP", cfg.tp_pts), ("SL", cfg.sl_points)):
+            if pts is not None and levels.points_to_price(pts) < min_dist_price:
                 errors.append(f"{name} {pts} pts is closer than the broker minimum of {min_pts:g} pts")
 
     ladder = levels.preview_ladder(cfg, 2)
-    if len(ladder) > 1 and cfg.sl_mode == "previous_entry":
-        sl_dist = abs(ladder[1].entry - ladder[1].sl)
+    next_sl = ladder[1].sl if len(ladder) > 1 else None
+    if next_sl is not None and cfg.sl_mode == "previous_entry":
+        sl_dist = abs(ladder[1].entry - next_sl)
         if min_dist_price > 0 and sl_dist < min_dist_price:
             errors.append("SL at previous entry is closer than the broker minimum distance")
 

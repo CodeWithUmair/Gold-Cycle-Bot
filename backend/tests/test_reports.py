@@ -9,8 +9,8 @@ from tests.helpers import Harness, run
 def test_report_kpis_from_real_engine_journal() -> None:
     async def scenario() -> Harness:
         h = Harness()
-        await h.arm(cycle_gap=None)
-        await h.px(4000, 4003, 4006, 4003)  # C1 TP, C2 TP, C3 opens at 4006 then SL at 4003
+        await h.arm(cycle_gap=None, max_cycles=3)
+        await h.px(4000, 4003, 4006, 4003)  # C1 TP, C2 TP, C3 opens at 4006 then SL at 4003 -> max cycles
         return h
 
     h = run(scenario())
@@ -31,7 +31,7 @@ def test_report_kpis_from_real_engine_journal() -> None:
     assert {r["reason"]: r["count"] for r in rep["reasons"]} == {"TP": 2, "SL": 1}
     assert len(rep["daily"]) == 1 and rep["daily"][0]["cycles"] == 3
     s = rep["sessions"][0]
-    assert (s["cycles"], s["tp"], s["sl"], s["stop_reason"], s["trigger_price"]) == (3, 2, 1, "SL", 4000)
+    assert (s["cycles"], s["tp"], s["sl"], s["stop_reason"], s["trigger_price"]) == (3, 2, 1, "MAX_CYCLES", 4000)
 
     csv = cycles_csv(h.repo.cycles_since(0))
     assert csv.splitlines()[0].startswith("session_id,cycle_no,direction")
