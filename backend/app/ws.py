@@ -23,19 +23,21 @@ class Hub:
 
     def publish(self, kind: str, payload: dict[str, Any]) -> None:
         if kind in COALESCE:
-            self._latest[kind] = payload
-            self._dirty.add(kind)
+            key = f"{kind}:{payload['mode']}" if payload.get("mode") else kind  # one latest state per engine
+            self._latest[key] = {"type": kind, "data": payload}
+            self._dirty.add(key)
         else:
             self._queue.append({"type": kind, "data": payload})
             del self._queue[:-500]
 
     def latest(self, kind: str) -> dict[str, Any] | None:
-        return self._latest.get(kind)
+        m = self._latest.get(kind)
+        return m["data"] if m else None
 
     async def add(self, ws: WebSocket) -> None:
         self.clients.add(ws)
-        for kind, data in self._latest.items():
-            await ws.send_json({"type": kind, "data": data})
+        for m in self._latest.values():
+            await ws.send_json(m)
 
     def remove(self, ws: WebSocket) -> None:
         self.clients.discard(ws)
@@ -44,7 +46,7 @@ class Hub:
         while not stop.is_set():
             msgs = self._queue
             self._queue = []
-            msgs += [{"type": k, "data": self._latest[k]} for k in self._dirty]
+            msgs += [self._latest[k] for k in self._dirty]
             self._dirty = set()
             if msgs and self.clients:
                 for ws in list(self.clients):

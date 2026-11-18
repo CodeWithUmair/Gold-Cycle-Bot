@@ -56,16 +56,10 @@ def validate_config(cfg: CycleConfig, spec: SymbolSpec, tick: Tick | None) -> tu
     min_dist_price = max(spec.stops_level, spec.freeze_level) * spec.point
     if min_dist_price > 0:
         min_pts = levels.price_to_points(min_dist_price)
+        # CYCLE: order 2's SL sits tp_points away (at order 1's entry), so checking TP covers it.
         for name, pts in (("TP", cfg.tp_pts), ("SL", cfg.sl_points)):
             if pts is not None and levels.points_to_price(pts) < min_dist_price:
                 errors.append(f"{name} {pts} pts is closer than the broker minimum of {min_pts:g} pts")
-
-    ladder = levels.preview_ladder(cfg, 2)
-    next_sl = ladder[1].sl if len(ladder) > 1 else None
-    if next_sl is not None and cfg.sl_mode == "previous_entry":
-        sl_dist = abs(ladder[1].entry - next_sl)
-        if min_dist_price > 0 and sl_dist < min_dist_price:
-            errors.append("SL at previous entry is closer than the broker minimum distance")
 
     if tick is not None:
         price = cfg.trigger_price
@@ -89,6 +83,6 @@ def validate_config(cfg: CycleConfig, spec: SymbolSpec, tick: Tick | None) -> tu
                 f"{cfg.max_slippage_points:g}: a fill can land up to {worst_cost:.2f} pts worse, leaving "
                 f"as little as {max(cfg.tp_pts - worst_cost, 0):.2f} pts to TP"
             )
-        if cfg.stop_price is not None and levels.stop_reached(tick.bid, tick.ask, cfg.direction, cfg.stop_price):
+        if cfg.stop_price is not None and levels.stop_reached(tick.bid, tick.ask, cfg):
             warnings.append("Price is already beyond the stop price")
     return errors, warnings

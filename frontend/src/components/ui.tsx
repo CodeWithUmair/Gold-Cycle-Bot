@@ -8,6 +8,10 @@ export const fmt = (n: number | null | undefined, d = 2) =>
 export const fmtMoney = (n: number | null | undefined, cur = '') =>
   n === null || n === undefined ? '—' : `${n >= 0 ? '+' : '−'}${Math.abs(n).toFixed(2)}${cur ? ` ${cur}` : ''}`
 
+/** Journal label: C3.1 / C3.2 for a cycle's order 1 / order 2, C1 for a single trade. */
+export const orderLabel = (r: { cycle_no: number; leg: number }, mode: string | null | undefined) =>
+  mode === 'CYCLE' ? `C${r.cycle_no}.${r.leg}` : `C${r.cycle_no}`
+
 export const pnlColor = (n: number | null | undefined) =>
   n === null || n === undefined || n === 0 ? 'text-muted' : n > 0 ? 'text-up' : 'text-down'
 

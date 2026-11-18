@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Account, CycleRow, EngineSnapshot, LogEntry, Tick } from '../types'
+import type { Account, CycleRow, EngineSnapshot, LogEntry, Mode, PerMode, Tick } from '../types'
 
 export interface SocketHandlers {
   onTick?: (t: Tick) => void
@@ -10,17 +10,17 @@ export interface SocketHandlers {
 
 interface SocketState {
   wsConnected: boolean
-  engine: EngineSnapshot | null
+  engines: PerMode<EngineSnapshot | null>
   account: Account | null
   tick: Tick | null
-  floating: number | null
+  floating: PerMode<number | null>
 }
 
 type Msg =
   | { type: 'tick'; data: Tick }
   | { type: 'state'; data: EngineSnapshot }
   | { type: 'account'; data: Account }
-  | { type: 'floating'; data: { profit: number } }
+  | { type: 'floating'; data: { profit: number; mode: Mode } }
   | { type: 'log'; data: LogEntry }
   | { type: 'toast'; data: LogEntry }
   | { type: 'cycle'; data: CycleRow }
@@ -29,10 +29,10 @@ type Msg =
 export function useSocket(enabled: boolean, handlers: SocketHandlers): SocketState {
   const [state, setState] = useState<SocketState>({
     wsConnected: false,
-    engine: null,
+    engines: { CYCLE: null, SINGLE: null },
     account: null,
     tick: null,
-    floating: null,
+    floating: { CYCLE: null, SINGLE: null },
   })
   const h = useRef(handlers)
   h.current = handlers
@@ -63,15 +63,15 @@ export function useSocket(enabled: boolean, handlers: SocketHandlers): SocketSta
           case 'state':
             setState((s) => ({
               ...s,
-              engine: m.data,
-              floating: m.data.position ? m.data.position.profit : null,
+              engines: { ...s.engines, [m.data.mode]: m.data },
+              floating: { ...s.floating, [m.data.mode]: m.data.position ? m.data.position.profit : null },
             }))
             break
           case 'account':
             setState((s) => ({ ...s, account: m.data }))
             break
           case 'floating':
-            setState((s) => ({ ...s, floating: m.data.profit }))
+            setState((s) => ({ ...s, floating: { ...s.floating, [m.data.mode]: m.data.profit } }))
             break
           case 'log':
             h.current.onLog?.(m.data)

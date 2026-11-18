@@ -44,8 +44,8 @@ Two modes:
 | `direction` | `BUY` \| `SELL` | yes | |
 | `lot` | float | yes | Validate against `volume_min`, `volume_max`, `volume_step` |
 | `tp_points` | float > 0 | yes | Can differ from SL (3, 4, 5, 6 …) |
-| `sl_points` | float > 0 \| null | no | **CONFIRMED 2026-11-16:** optional in CYCLE mode (blank = C1 has no SL). Required in SINGLE mode. |
-| `cycle_gap` | float ≥ 0 \| null | no | "Cycle Gape". **Only used after an SL** — decides where the retry starts (see §4.4) |
+| `sl_points` | float > 0 \| null | no | **Not used in CYCLE mode** (2026-11-18: order 1 has no SL, order 2's SL = order 1's entry). Required in SINGLE mode. |
+| `cycle_gap` | float ≥ 0 \| null | no | "Cycle Gape". **Only used after order 2's SL** — decides where the next cycle starts (see §4.4) |
 | `stop_price` | float \| null | no | "Stop bot cycle at position" — bot stops cycling here |
 
 ### SINGLE mode (Part Two)
@@ -55,29 +55,38 @@ Two modes:
 
 ## 4. Cycle engine — exact rules
 
-### 4.1 Client's cycle (CONFIRMED 2026-11-16 — use as acceptance tests)
+### 4.1 Client's cycle (CONFIRMED 2026-11-18 — use as acceptance tests)
 
-*"Entry 4000, TP 4003. When the trade hits TP at 4003 it closes and the new order opens. The new order's
-starting point is the previous order's TP (4003), and its SL is 4000 — the previous entry."*
+*"A cycle has two orders. Entry 4000, TP 3 points → TP 4003. The first order has the entry and the TP, no SL.
+The second order has the SL, no TP, and its starting point is the first order's TP."*
 
-BUY, tp=3, sl=3 (any gap — the gap does not apply on TP):
+One cycle = two orders, one open at a time:
+- **Order 1:** opens when price touches the cycle entry. TP = entry + sign * tp_points. **No SL.**
+- **Order 2:** opens at once (market) when order 1 hits TP, planned at order 1's TP. **SL = order 1's entry. No TP.**
+  It runs until its SL, the stop price, a limit, or a manual stop.
+- **Next cycle:** when order 2 hits its SL, the next cycle starts at the same entry (+ gap, §4.4).
 
-| Cycle | Entry | TP | SL |
+BUY, tp=3, gap blank:
+
+| Cycle.order | Entry | TP | SL |
 |---|---|---|---|
-| C1 | 4000 | 4003 | 3997 |
-| C2 | 4003 | 4006 | 4000 |
-| C3 | 4006 | 4009 | 4003 |
+| C1.1 | 4000 | 4003 | — |
+| C1.2 | 4003 | — | 4000 |
+| C2.1 | 4000 | 4003 | — |
+| C2.2 | 4003 | — | 4000 |
 
-SELL, tp=3, sl=3:
+SELL, tp=3, gap 2:
 
-| Cycle | Entry | TP | SL |
+| Cycle.order | Entry | TP | SL |
 |---|---|---|---|
-| C1 | 4000 | 3997 | 4003 |
-| C2 | 3997 | 3994 | 4000 |
-| C3 | 3994 | 3991 | 3997 |
+| C1.1 | 4000 | 3997 | — |
+| C1.2 | 3997 | — | 4000 |
+| C2.1 | 3998 | 3995 | — |
+| C2.2 | 3995 | — | 3998 |
 
-(The client's original sheet showed C2 at 4002 with gap 2. That is superseded: the gap is only used after an SL, §4.4.)
-Each trade is one cycle in the counter (C1, C2, …) and for `max_cycles`.
+`sl_points` is not used in CYCLE mode. `max_cycles` counts cycles (two orders each). The journal has one row per
+order (`cycles.leg` = 1 or 2); orders are labelled C{n}.{order} in logs and the UI. Replaces the 2026-11-16 ladder
+(C2 at C1's TP with its own TP).
 
 ### 4.2 Level computation (use PLANNED levels, not fill prices)
 
@@ -85,41 +94,30 @@ Keep the ladder clean: all TP/SL/next-entry levels are computed from the **plann
 
 ```
 sign = +1 for BUY, -1 for SELL
-tp_price  = planned_entry + sign * tp_points
-sl_price  = planned_entry - sign * sl_points
+order 1:  tp = planned_entry + sign * tp_points,  sl = none
+order 2:  tp = none,                               sl = order 1's planned entry
 ```
 
 Config `level_anchor: "planned" | "fill"` (default `"planned"`).
 
-### 4.3 Next entry after a cycle closes on TP
+### 4.3 Order 2 (after order 1 hits TP)
 
-**CONFIRMED 2026-11-16:** next planned entry = previous TP price, whatever the gap. Price is already there, so open
-immediately at market. (C1 TP 4003 → C2 entry 4003, TP 4006, SL 4000.)
+Order 2's planned entry = order 1's TP. Price is already there, so it opens immediately at market, with SL at
+order 1's entry and no TP. `cycle_gap` is a manual input set by the trader per session (any value, or blank); it is
+only used after order 2's SL (§4.4).
 
-**CONFIRMED (Q2 answered):** the next trade's SL = the previous cycle's entry (`sl_mode="previous_entry"`, default).
-`"points"` (entry − sl_points) is kept as a config option. C1 has no previous entry, so it uses `sl_points`
-(or no SL when `sl_points` is blank).
+### 4.4 When order 2 closes on SL
 
-**CONFIRMED:** `cycle_gap` is a manual input set by the trader per session (any value, or blank). The UI must make it easy to set/change before arming.
+The cycle is over and the next one starts from the cycle entry, same direction:
 
-(Q1 is obsolete: the gap no longer applies after a TP, so there is no pullback to wait for.)
-
-### 4.4 When a cycle closes on SL
-
-**CONFIRMED 2026-11-16 (replaces "SL hit → bot stops"):** an SL does **not** stop the bot. The losing trade is
-started again, in the same direction:
-
-- **gap blank** → re-enter at the losing trade's entry. (BUY 4000, SL hit at 3997 → next trade at 4000.)
-- **gap set** → re-enter at the losing trade's entry + sign * gap. (gap 2 → 4002; SELL → 3998.) **CONFIRMED (Q6):** the gap moves in the selected direction.
-- Wait for price to **touch** the re-entry level (same trigger rule as §4.6), then open.
-- The retry keeps the losing trade's SL reference (its "previous entry"), so a retry with a blank gap is the same
-  trade again: same entry, TP and SL.
-- Log/toast "C{n} hit SL at {price}". Each retry is a new cycle number.
-- The bot stops only on stop price, `max_cycles`, daily loss limit, or a manual stop (§5).
+- **gap blank** → next cycle at the same entry (4000).
+- **gap set** → entry + sign * gap (gap 2 → 4002; SELL → 3998). **CONFIRMED (Q6):** the gap moves in the selected direction.
+- Wait for price to **touch** the level (same trigger rule as §4.6), then open order 1.
+- Log/toast "C{n}.2 hit SL at {price}". The bot stops only on stop price, `max_cycles`, daily loss limit, or a manual stop (§5).
 
 ### 4.5 Stop price
 
-- BUY cycle: stop when price (bid) ≥ `stop_price`. SELL cycle: stop when price (ask) ≤ `stop_price`.
+- **CONFIRMED 2026-11-18: the stop price is free** — any value above or below the trigger, for BUY and SELL (only "equal to the trigger" is rejected). Stop above the trigger → stop when price rises to it; below → when price falls to it. Measured on the closing side: bid for BUY, ask for SELL.
 - On stop: **never open another cycle**; go to `STOPPED` and wait for the trader's next instruction.
 - **CONFIRMED:** When price reaches `stop_price`, **close the open trade immediately** at market, then go `STOPPED`. Log the close reason as `STOP_PRICE`. If the close order is rejected, retry every tick until it closes, and alert the UI.
 - Also stop the chain if the *next planned entry* would be beyond `stop_price`.
@@ -144,8 +142,8 @@ IDLE ──arm──▶ ARMED ──price touches trigger──▶ OPENING ─�
                                                                          ▼
                                                                   RESOLVING (read deal reason: TP / SL / manual / stop-out)
                                                                          │
-                         ┌── TP: open next at the TP (OPENING, immediate) ┤
-                         ├── SL: re-arm at losing entry (+gap) (ARMED) ───┤
+                         ┌── order 1 TP: open order 2 at the TP (OPENING) ┤
+                         ├── order 2 SL: next cycle at entry (+gap) (ARMED)┤
                          ▼                                               ▼
                    next cycle                    STOPPED (stop_price hit → close open trade, limits hit, manual stop, error)
 ```
@@ -303,12 +301,13 @@ Minimal, dark, smooth. Performance first: no heavy component libraries, and thro
 Confirmed:
 - Point = 1.00 price; one trade at a time; Python; MT5; Exness; Windows VPS.
 - Gap is a manual input set by the trader.
-- (2026-11-16) After TP: next trade opens at once at the previous TP, SL at the previous entry (Q1 obsolete, Q2 = previous entry).
-- (2026-11-16) SL is optional in CYCLE mode. SL hit → the bot does NOT stop: it retries the losing trade from its entry (gap blank) or entry + gap. Same direction, no reverse.
-- (2026-11-16, Q6) After an SL with a gap set, the re-entry moves by the gap in the selected direction: BUY 4000 → 4002, SELL 4000 → 3998.
+- (2026-11-18) **Two-order cycle** (§4.1), replaces the 2026-11-16 ladder: order 1 = entry + TP, no SL; on TP, order 2 opens at that TP with SL at order 1's entry and no TP; order 2 runs until its SL / stop price / stop; after order 2's SL the next cycle restarts at the entry (+ gap).
+- (2026-11-16, Q6) The gap moves in the selected direction: BUY 4000 → 4002, SELL 4000 → 3998.
 - (2026-11-16) Loss guard after SL = existing limits only (stop price, max cycles, daily loss, manual stop).
 - Stop price reached → close the open trade immediately, then stop.
 - Price already past the trigger at arm time → don't enter; wait for price to come back to the trigger, then start.
+- (2026-11-18) Stop price is free: no "must be above/below the trigger" rule (§4.5).
+- (2026-11-18) Cycle and Single are separate bots and can run at the same time: two engines, Single uses `magic + 1`. "One trade at a time" (§2) is per bot.
 
 ---
 

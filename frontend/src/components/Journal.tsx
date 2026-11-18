@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import type { CycleRow } from '../types'
-import { NumberTicker, fmt, fmtMoney, pnlColor } from './ui'
+import { NumberTicker, fmt, fmtMoney, orderLabel, pnlColor } from './ui'
 
 const dur = (s: number) => {
   if (s < 60) return `${Math.round(s)}s`
@@ -14,7 +14,7 @@ const RESULT_CLS: Record<string, string> = {
   SL: 'bg-down/15 text-down',
 }
 
-export function Journal({ rows, sessionPnl, currency, onOpenLog }: { rows: CycleRow[]; sessionPnl: number; currency: string; onOpenLog: () => void }) {
+export function Journal({ rows, mode, sessionPnl, currency, onOpenLog }: { rows: CycleRow[]; mode: string | undefined; sessionPnl: number; currency: string; onOpenLog: () => void }) {
   const [now, setNow] = useState(() => Date.now() / 1000)
   useEffect(() => {
     const t = window.setInterval(() => setNow(Date.now() / 1000), 1000)
@@ -62,12 +62,12 @@ export function Journal({ rows, sessionPnl, currency, onOpenLog }: { rows: Cycle
                   transition={{ duration: 0.8 }}
                   className="border-t border-line/60 [&>td]:px-3 [&>td]:py-1.5"
                 >
-                  <td className="text-muted">C{r.cycle_no}</td>
+                  <td className="text-muted">{orderLabel(r, mode)}</td>
                   <td className={r.direction === 'BUY' ? 'text-up' : 'text-down'}>{r.direction}</td>
                   <td className="text-right">{fmt(r.planned_entry)}</td>
                   <td className="text-right">{fmt(r.fill_price, 3)}</td>
                   <td className={`text-right ${(r.slippage ?? 0) > 0 ? 'text-warn' : 'text-muted'}`}>{fmt(r.slippage)}</td>
-                  <td className="text-right text-up/90">{fmt(r.tp)}</td>
+                  <td className="text-right text-up/90">{fmt(r.tp || null)}</td>
                   <td className="text-right text-down/90">{fmt(r.sl || null)}</td>
                   <td>
                     {r.close_reason ? (

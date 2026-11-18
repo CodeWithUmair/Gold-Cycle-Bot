@@ -130,6 +130,10 @@ cd goldcycle\backend
 | `single` | SINGLE BUY, trigger = bid − 0.3, TP 1 / SL 1; prints the server-side TP/SL on the position; waits for IDLE |
 | `cycle` | CYCLE BUY gap blank, trigger = bid + 0.3, TP 0.6 / SL 2, stop = trigger + 1.5, max 3 cycles |
 | `kill` | SINGLE BUY TP 10 / SL 10; once in position, calls `close_all_and_stop()` |
+| `chain` | ADR-0018: CYCLE BUY TP 2 / SL 3, max 3; prints each server position, so C2's SL = C1's entry is checked on the broker |
+| `slretry` | ADR-0018: CYCLE BUY TP 4 / SL 1, gap blank, max 3; after SL the same trade is re-armed at the same entry |
+| `slgap` | ADR-0018: as `slretry` with gap 1, max 2; re-entry = losing entry + 1 (BUY: up) |
+| `nosl` | ADR-0018: CYCLE BUY TP 5, SL blank; checks the broker accepts SL 0.0, then kill switch |
 | Cleanup | In `finally`: kill switch if still active, prints leftover bot positions (should be 0) |
 
 Requirements: MT5 terminal running and logged in (password saved), Algo Trading enabled, live market hours.
@@ -137,7 +141,8 @@ Each scenario waits up to 5–15 min for price to move.
 
 ### Results
 
-See [HANDOFF.md](../HANDOFF.md) Session 1 for the latest live results.
+See [HANDOFF.md](../HANDOFF.md) Session 2 for the latest live results (ADR-0018 rules, 2026-11-16) and Session 1 for
+the first run.
 
 ## 5. Demo → live checklist (CLAUDE.md §10.3)
 

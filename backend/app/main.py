@@ -20,6 +20,7 @@ from app.broker.sim_broker import SimBroker
 from app.config import Settings, get_settings
 from app.context import AppContext
 from app.engine.cycle_engine import CycleEngine
+from app.engine.models import Mode
 from app.logging_setup import setup_logging
 from app.security import COOKIE_NAME, LoginLimiter, SessionStore
 from app.storage.repo import Repo
@@ -85,30 +86,35 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         connected = False
         log.error("Broker connect failed: %s — will keep retrying", e)
     symbol = await pick_symbol(s, repo, broker) if connected else (s.symbol or repo.get_setting("symbol") or "XAUUSD")
-    engine = CycleEngine(broker, repo, symbol, s.magic, emit=hub.publish)
-    engine.connected = connected
-    if connected:
-        try:
-            await engine.load_symbol()
-        except Exception as e:
-            log.error("Symbol %s failed to load: %s", symbol, e)
+    # Single trades get magic+1 so each engine's "one position at a time" guard only sees its own trades.
+    engines = {
+        m: CycleEngine(broker, repo, symbol, s.magic + i, emit=hub.publish, mode=m)
+        for i, m in enumerate((Mode.CYCLE, Mode.SINGLE))
+    }
+    for engine in engines.values():
+        engine.connected = connected
+        if connected:
+            try:
+                await engine.load_symbol()
+            except Exception as e:
+                log.error("Symbol %s failed to load: %s", symbol, e)
     log.info("GoldCycle up: broker=%s symbol=%s dry_run=%s", broker.name, symbol, s.dry_run)
 
     app.state.ctx = AppContext(
         settings=s,
         repo=repo,
         broker=broker,
-        engine=engine,
+        engines=engines,
         hub=hub,
         sessions=SessionStore(ttl_s=s.session_ttl_hours * 3600),
         limiter=LoginLimiter(),
     )
     stop = asyncio.Event()
-    tasks = [
-        asyncio.create_task(engine.run(s.poll_interval_ms / 1000, stop), name="engine"),
-        asyncio.create_task(hub.run(stop), name="hub"),
-        asyncio.create_task(_recover_when_connected(engine, s.resume_on_restart, stop), name="recover"),
-    ]
+    tasks = [asyncio.create_task(hub.run(stop), name="hub")]
+    for m, engine in engines.items():
+        tasks.append(asyncio.create_task(engine.run(s.poll_interval_ms / 1000, stop), name=f"engine-{m}"))
+        recover = _recover_when_connected(engine, s.resume_on_restart, stop)
+        tasks.append(asyncio.create_task(recover, name=f"recover-{m}"))
     try:
         yield
     finally:
@@ -135,7 +141,12 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health(request: Request) -> dict[str, Any]:
         ctx: AppContext = request.app.state.ctx
-        return {"ok": True, "broker": ctx.broker.name, "connected": ctx.engine.connected, "state": ctx.engine.state}
+        return {
+            "ok": True,
+            "broker": ctx.broker.name,
+            "connected": ctx.engine.connected,
+            "state": {m: e.state for m, e in ctx.engines.items()},
+        }
 
     app.include_router(auth.router)
     app.include_router(bot.router)
@@ -151,7 +162,8 @@ def create_app() -> FastAPI:
             return
         await websocket.accept()
         await ctx.hub.add(websocket)
-        await websocket.send_json({"type": "state", "data": ctx.engine.snapshot()})
+        for e in ctx.engines.values():
+            await websocket.send_json({"type": "state", "data": e.snapshot()})
         try:
             while True:
                 await websocket.receive_text()  # client pings; we only push

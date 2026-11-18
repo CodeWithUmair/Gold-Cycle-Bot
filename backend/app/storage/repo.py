@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS cycles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL REFERENCES sessions(id),
     cycle_no INTEGER NOT NULL,
+    leg INTEGER NOT NULL DEFAULT 1,
     direction TEXT NOT NULL,
     planned_entry REAL NOT NULL,
     fill_price REAL,
@@ -76,6 +77,9 @@ class Repo:
         with self._lock:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.executescript(SCHEMA)
+            cols = {r["name"] for r in self._db.execute("PRAGMA table_info(cycles)")}
+            if "leg" not in cols:  # DBs from before the two-order cycle (2026-11-18)
+                self._db.execute("ALTER TABLE cycles ADD COLUMN leg INTEGER NOT NULL DEFAULT 1")
 
     def close(self) -> None:
         self._db.close()
@@ -106,8 +110,12 @@ class Repo:
     def end_session(self, sid: str) -> None:
         self._exec("UPDATE sessions SET ended_at=? WHERE id=? AND ended_at IS NULL", (time.time(), sid))
 
-    def last_open_session(self) -> dict[str, Any] | None:
-        rows = self._all("SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1")
+    def last_open_session(self, mode: str | None = None) -> dict[str, Any] | None:
+        rows = self._all(
+            "SELECT * FROM sessions WHERE ended_at IS NULL AND (? IS NULL OR mode = ?) "
+            "ORDER BY started_at DESC LIMIT 1",
+            (mode, mode),
+        )
         return rows[0] if rows else None
 
     def sessions(self, limit: int = 50) -> list[dict[str, Any]]:

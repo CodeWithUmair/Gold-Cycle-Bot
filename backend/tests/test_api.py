@@ -52,7 +52,7 @@ def test_auth_required_and_rate_limited(client: TestClient) -> None:
 
 def test_csrf_enforced_on_actions(client: TestClient) -> None:
     login(client)
-    r = client.post("/api/bot/stop")
+    r = client.post("/api/bot/stop?mode=CYCLE")
     assert r.status_code == 403
 
 
@@ -67,7 +67,9 @@ def test_validate_arm_stop_flow(client: TestClient) -> None:
 
     good = client.post("/api/bot/validate", json=cfg).json()
     assert good["errors"] == []
-    assert [c["entry"] for c in good["ladder"]] == [4100, 4103, 4106, 4109, 4112]
+    assert [(c["cycle"], c["leg"], c["entry"]) for c in good["ladder"]] == [
+        (1, 1, 4100), (1, 2, 4103), (2, 1, 4102), (2, 2, 4105), (3, 1, 4104),
+    ]  # fmt: skip
 
     r = client.post("/api/bot/arm", json=cfg, headers=h)
     assert r.status_code == 200, r.text
@@ -78,10 +80,22 @@ def test_validate_arm_stop_flow(client: TestClient) -> None:
         first = ws.receive_json()
         assert first["type"] in {"state", "tick", "account"}
 
-    r = client.post("/api/bot/stop", headers=h)
-    assert r.status_code == 200 and r.json()["state"] == "STOPPED"
+    # Single runs alongside the cycle, on its own engine (client, 2026-11-18)
+    single = {**cfg, "mode": "SINGLE", "direction": "SELL", "cycle_gap": None}
+    r = client.post("/api/bot/arm", json=single, headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json()["mode"] == "SINGLE" and r.json()["state"] == "ARMED"
+    engines = client.get("/api/bot/status").json()["engines"]
+    assert engines["CYCLE"]["state"] == engines["SINGLE"]["state"] == "ARMED"
 
-    assert client.get("/api/history/sessions").json()[0]["stop_reason"] == "MANUAL_STOP"
+    r = client.post("/api/bot/stop?mode=CYCLE", headers=h)
+    assert r.status_code == 200 and r.json()["state"] == "STOPPED"
+    assert client.get("/api/bot/status").json()["engines"]["SINGLE"]["state"] == "ARMED"  # untouched
+    assert client.post("/api/bot/close-all", headers=h).status_code == 200  # no mode = both
+    assert client.get("/api/bot/status").json()["engines"]["SINGLE"]["state"] == "STOPPED"
+
+    reasons = {x["mode"]: x["stop_reason"] for x in client.get("/api/history/sessions").json()}
+    assert reasons == {"CYCLE": "MANUAL_STOP", "SINGLE": "KILL_SWITCH"}
     assert len(client.get("/api/candles?tf=M5&count=50").json()) > 0
     assert client.get("/api/settings").json()["symbols"] == ["XAUUSD"]
 

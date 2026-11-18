@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Fragment, useEffect, useState } from 'react'
 import { api } from '../api'
 import { DailyBars, EquityChart, MARK } from '../components/charts'
-import { fmt, fmtMoney, pnlColor } from '../components/ui'
+import { fmt, fmtMoney, orderLabel, pnlColor } from '../components/ui'
 import type { CycleRow, Report, ReportKpis } from '../types'
 
 const RANGES = [
@@ -172,7 +172,7 @@ export function Reports({ currency }: { currency: string }) {
                           <tr>
                             <td colSpan={13} className="p-0">
                               <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden bg-bg/60">
-                                <CycleTable rows={openRows} />
+                                <CycleTable rows={openRows} mode={s.mode} />
                               </motion.div>
                             </td>
                           </tr>
@@ -268,7 +268,7 @@ function Reasons({ rows, currency }: { rows: Report['reasons']; currency: string
   )
 }
 
-function CycleTable({ rows }: { rows: CycleRow[] }) {
+function CycleTable({ rows, mode }: { rows: CycleRow[]; mode: string }) {
   if (rows.length === 0) return <p className="p-4 text-xs text-faint">Loading / no cycles.</p>
   return (
     <table className="num w-full text-xs">
@@ -290,11 +290,11 @@ function CycleTable({ rows }: { rows: CycleRow[] }) {
       <tbody>
         {rows.map((r) => (
           <tr key={r.id} className="border-t border-line/40 [&>td]:px-3 [&>td]:py-1.5 [&>td]:text-right">
-            <td className="!text-left text-muted">C{r.cycle_no}</td>
+            <td className="!text-left text-muted">{orderLabel(r, mode)}</td>
             <td>{fmt(r.planned_entry)}</td>
             <td>{fmt(r.fill_price, 3)}</td>
             <td>{fmt(r.slippage)}</td>
-            <td>{fmt(r.tp)}</td>
+            <td>{fmt(r.tp || null)}</td>
             <td>{fmt(r.sl || null)}</td>
             <td>{fmt(r.close_price, 3)}</td>
             <td className="!text-left">{r.close_reason ?? 'open'}</td>

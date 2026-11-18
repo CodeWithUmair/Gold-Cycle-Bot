@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.broker.base import TIMEFRAME_SECONDS
 from app.context import AppContext, client_ip, get_ctx
-from app.engine.cycle_engine import EngineError
+from app.engine.cycle_engine import ACTIVE, EngineError
 from app.security import Session, csrf_session, current_session
 
 router = APIRouter(prefix="/api", tags=["settings"])
@@ -41,7 +41,11 @@ async def set_symbol(
 ) -> dict[str, Any]:
     ctx.repo.audit(s.username, client_ip(request), "set_symbol", body.symbol)
     try:
-        await ctx.engine.set_symbol(body.symbol)
+        for e in ctx.engines.values():  # check both first so the symbol never ends up half-changed
+            if e.state in ACTIVE:
+                raise EngineError(f"Stop the {e.mode} bot before changing the symbol")
+        for e in ctx.engines.values():
+            await e.set_symbol(body.symbol)
     except (EngineError, ValueError) as e:
         raise HTTPException(409, str(e)) from e
     ctx.repo.set_setting("symbol", body.symbol)

@@ -42,7 +42,6 @@ export interface CycleConfig {
   sl_price: number | null
   cycle_gap: number | null
   stop_price: number | null
-  sl_mode: 'points' | 'previous_entry'
   level_anchor: 'planned' | 'fill'
   trigger_price_side: 'bid' | 'ask' | 'mid'
   max_slippage_points: number
@@ -63,12 +62,14 @@ export interface LivePosition {
 }
 
 export interface EngineSnapshot {
+  mode: Mode // which engine: Cycle and Single run side by side
   state: BotState
   session_id: string | null
   symbol: string
   connected: boolean
   config: CycleConfig | null
   cycle_no: number
+  leg: number
   trigger_level: number | null
   planned_entry: number | null
   tp: number | null
@@ -90,6 +91,7 @@ export interface CycleRow {
   id: number
   session_id: string
   cycle_no: number
+  leg: number // CYCLE: 1 = order 1 (TP, no SL), 2 = order 2 (SL, no TP)
   direction: Direction
   planned_entry: number
   fill_price: number | null
@@ -113,8 +115,9 @@ export interface LogEntry {
 
 export interface PlannedCycle {
   cycle: number
+  leg: number
   entry: number
-  tp: number
+  tp: number | null
   sl: number | null
   lot: number
 }
@@ -207,5 +210,8 @@ export interface Report {
   reasons: { reason: string; count: number; pnl: number }[]
   sessions: SessionSummary[]
 }
+
+export type PerMode<T> = Record<Mode, T>
+export const MODES: Mode[] = ['CYCLE', 'SINGLE']
 
 export const ACTIVE_STATES: BotState[] = ['ARMED', 'OPENING', 'IN_POSITION', 'RESOLVING']

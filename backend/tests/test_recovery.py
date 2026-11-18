@@ -28,7 +28,7 @@ def test_restart_in_position_waits_for_resume_then_reattaches() -> None:
         await h2.engine.resume()
         assert h2.engine.state == BotState.IN_POSITION and h2.engine.position.ticket == ticket  # type: ignore[union-attr]
         await h2.px(4003)
-        assert h2.engine.state == BotState.IN_POSITION and h2.engine.cycle_no == 2 and h2.engine.planned_entry == 4003
+        assert h2.engine.state == BotState.IN_POSITION and h2.engine.leg == 2 and h2.engine.planned_entry == 4003
         assert len(h2.sim.open_positions) == 1
 
     run(scenario())
@@ -60,23 +60,24 @@ def test_position_closed_on_tp_while_down_continues_chain() -> None:
 
         h2 = restart(h)
         await h2.engine.recover(auto_resume=True)
-        assert h2.engine.state == BotState.IN_POSITION and h2.engine.cycle_no == 2
+        assert h2.engine.state == BotState.IN_POSITION and (h2.engine.cycle_no, h2.engine.leg) == (1, 2)
         rows = h2.cycles()
         assert rows[0]["close_reason"] == "TP"
 
     run(scenario())
 
 
-def test_position_closed_on_sl_while_down_rearms() -> None:
+def test_order_2_closed_on_sl_while_down_rearms_next_cycle() -> None:
     async def scenario() -> None:
         h = Harness()
-        await h.arm()
-        await h.px(4000)
-        h.sim.set_price(3996)
-        await h.sim.tick("XAUUSD")
+        await h.arm()  # gap 2
+        await h.px(4000, 4003)  # C1.2 open, SL 4000
+        h.sim.set_price(3999)
+        await h.sim.tick("XAUUSD")  # broker closes it on SL while the bot is down
         h2 = restart(h)
         await h2.engine.recover(auto_resume=True)
-        assert h2.engine.state == BotState.ARMED and h2.engine.cycle_no == 2 and h2.engine.planned_entry == 4002
+        assert h2.engine.state == BotState.ARMED and (h2.engine.cycle_no, h2.engine.leg) == (2, 1)
+        assert h2.engine.planned_entry == 4002
 
     run(scenario())
 

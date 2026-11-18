@@ -31,4 +31,4 @@ The **spec** ([CLAUDE.md](../../CLAUDE.md)) says *what* the bot must do. These f
 | [0015](0015-server-side-validation-preview.md) | Preview ladder + validation computed server-side only | Accepted | UI |
 | [0016](0016-auth-sessions-csrf.md) | In-memory sessions, double-submit CSRF header, argon2 | Accepted | Security |
 | [0017](0017-ws-coalescing.md) | WebSocket coalesces high-rate messages, 100 ms flush | Accepted | UI |
-| [0018](0018-cycle-rules-2026-11-16.md) | Cycle continues from TP; SL retries the losing trade; SL optional | Accepted | Rules |
+| [0018](0018-cycle-rules-2026-11-16.md) | Cycle continues from TP; SL retries the losing trade; SL optional | Superseded 2026-11-18 by the two-order cycle (CLAUDE.md §4.1) | Rules |

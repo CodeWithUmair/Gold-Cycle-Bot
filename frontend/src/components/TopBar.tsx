@@ -1,8 +1,9 @@
-import type { Account, EngineSnapshot, Tick } from '../types'
+import { MODES, type Account, type EngineSnapshot, type PerMode, type Tick } from '../types'
 import { Dot, NumberTicker, StateBadge, fmt } from './ui'
 
 interface Props {
   engine: EngineSnapshot | null
+  engines: PerMode<EngineSnapshot | null>
   account: Account | null
   tick: Tick | null
   wsConnected: boolean
@@ -14,7 +15,7 @@ interface Props {
   onView: (v: 'trading' | 'reports') => void
 }
 
-export function TopBar({ engine, account, tick, wsConnected, broker, dryRun, onSettings, onLogout, view, onView }: Props) {
+export function TopBar({ engine, engines, account, tick, wsConnected, broker, dryRun, onSettings, onLogout, view, onView }: Props) {
   const digits = engine?.spec?.digits ?? 2
   const spread = tick ? tick.ask - tick.bid : null
   const mode = dryRun ? 'DRY RUN' : broker === 'sim' ? 'SIMULATOR' : account?.is_demo ? 'DEMO' : account ? 'LIVE' : ''
@@ -80,7 +81,14 @@ export function TopBar({ engine, account, tick, wsConnected, broker, dryRun, onS
       </div>
 
       <div className="ml-auto flex items-center gap-3">
-        {engine && <StateBadge state={engine.state} />}
+        {MODES.map((m) =>
+          engines[m] ? (
+            <span key={m} className="flex items-center gap-1.5 text-[11px] tracking-wider text-faint uppercase">
+              {m === 'CYCLE' ? 'Cycle' : 'Single'}
+              <StateBadge state={engines[m]!.state} />
+            </span>
+          ) : null,
+        )}
         <button className="btn px-2 py-1.5 text-muted hover:bg-panel-2 hover:text-text" onClick={onSettings} title="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="3" />

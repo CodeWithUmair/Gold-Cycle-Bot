@@ -53,10 +53,10 @@ class CycleConfig(BaseModel):
     tp_price: float | None = Field(default=None, gt=0)
     sl_price: float | None = Field(default=None, gt=0)
 
-    # CYCLE only. sl_points may be blank in CYCLE mode (no SL on C1). cycle_gap only applies after an SL.
+    # CYCLE only. A cycle is two orders (§4.1): order 1 has TP and no SL, order 2 has SL (= order 1's entry) and
+    # no TP, so sl_points is not used in CYCLE mode. cycle_gap shifts the restart after order 2's SL.
     cycle_gap: float | None = Field(default=None, ge=0)
     stop_price: float | None = Field(default=None, gt=0)
-    sl_mode: Literal["points", "previous_entry"] = "previous_entry"  # Q2 (client: SL at the previous entry)
 
     # execution
     level_anchor: Literal["planned", "fill"] = "planned"
@@ -95,11 +95,11 @@ class CycleConfig(BaseModel):
             self.cycle_gap = None
             self.stop_price = None
             self.max_cycles = 1
-        elif self.stop_price is not None:
-            if self.direction == Direction.BUY and self.stop_price <= self.trigger_price:
-                raise ValueError("BUY cycle: stop_price must be above trigger_price")
-            if self.direction == Direction.SELL and self.stop_price >= self.trigger_price:
-                raise ValueError("SELL cycle: stop_price must be below trigger_price")
+        else:
+            self.sl_points = None
+        if self.mode == Mode.CYCLE and self.stop_price is not None and self.stop_price == self.trigger_price:
+            # Any other value is allowed, above or below the trigger, for BUY and SELL (client, 2026-11-18).
+            raise ValueError("stop_price can't equal trigger_price")
 
         if self.trading_hours is not None:
             self.trading_hours = self.trading_hours.strip() or None

@@ -10,12 +10,22 @@ import { TopBar } from '../components/TopBar'
 import { ConfirmModal, Toasts, type Toast } from '../components/ui'
 import { useSocket } from '../hooks/useSocket'
 import { Reports } from './Reports'
-import { ACTIVE_STATES, type CycleRow, type EngineSnapshot, type LogEntry, type Tick } from '../types'
+import { ACTIVE_STATES, MODES, type CycleRow, type EngineSnapshot, type LogEntry, type Mode, type PerMode, type Tick } from '../types'
 
 let toastId = 0
+const TAB_KEY = 'goldcycle.tab'
+
+function savedTab(): Mode {
+  try {
+    return localStorage.getItem(TAB_KEY) === 'SINGLE' ? 'SINGLE' : 'CYCLE'
+  } catch {
+    return 'CYCLE' // storage unavailable
+  }
+}
 
 export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
-  const [engine, setEngine] = useState<EngineSnapshot | null>(null)
+  const [engines, setEngines] = useState<PerMode<EngineSnapshot | null>>({ CYCLE: null, SINGLE: null })
+  const [tab, setTab] = useState<Mode>(savedTab)
   const [broker, setBroker] = useState('')
   const [dryRun, setDryRun] = useState(false)
   const [cycles, setCycles] = useState<CycleRow[]>([])
@@ -23,7 +33,7 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [logOpen, setLogOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [killOpen, setKillOpen] = useState(false)
+  const [killOpen, setKillOpen] = useState<Mode | 'ALL' | null>(null)
   const [view, setView] = useState<'trading' | 'reports'>('trading')
   const tickRef = useRef<((t: Tick) => void) | null>(null)
 
@@ -46,15 +56,26 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
   })
 
   useEffect(() => {
-    if (ws.engine) setEngine(ws.engine)
-  }, [ws.engine])
+    setEngines((e) => ({ CYCLE: ws.engines.CYCLE ?? e.CYCLE, SINGLE: ws.engines.SINGLE ?? e.SINGLE }))
+  }, [ws.engines])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TAB_KEY, tab)
+    } catch {
+      /* storage unavailable */
+    }
+  }, [tab])
+
+  // chart, journal and top-bar symbol follow the selected tab's engine
+  const engine = engines[tab]
 
   // initial load
   useEffect(() => {
     api
       .status()
       .then((s) => {
-        setEngine((e) => e ?? s.engine)
+        setEngines((e) => ({ CYCLE: e.CYCLE ?? s.engines.CYCLE, SINGLE: e.SINGLE ?? s.engines.SINGLE }))
         setBroker(s.broker)
         setDryRun(s.dry_run)
       })
@@ -79,17 +100,26 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
     const k = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        setKillOpen(true)
+        setKillOpen('ALL')
       }
     }
     window.addEventListener('keydown', k)
     return () => window.removeEventListener('keydown', k)
   }, [])
 
-  const onAction = async (name: 'arm' | 'stop' | 'stopAfterCycle' | 'closeAll' | 'resume', cfg?: unknown) => {
+  const onAction = async (mode: Mode, name: 'arm' | 'stop' | 'stopAfterCycle' | 'resume', cfg?: unknown) => {
     try {
-      const snap = name === 'arm' ? await api.arm(cfg) : await api[name]()
-      setEngine(snap)
+      const snap = name === 'arm' ? await api.arm(cfg) : await api[name](mode)
+      setEngines((e) => ({ ...e, [snap.mode]: snap }))
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) return onLoggedOut()
+      toast({ ts: Date.now() / 1000, level: 'error', msg: (e as Error).message })
+    }
+  }
+
+  const closeAll = async (target: Mode | 'ALL') => {
+    try {
+      await api.closeAll(target === 'ALL' ? undefined : target) // state arrives over the websocket
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return onLoggedOut()
       toast({ ts: Date.now() / 1000, level: 'error', msg: (e as Error).message })
@@ -102,12 +132,14 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
   }
 
   const currency = ws.account?.currency ?? ''
-  const running = !!engine && ACTIVE_STATES.includes(engine.state)
+  const running = MODES.some((m) => !!engines[m] && ACTIVE_STATES.includes(engines[m]!.state))
+  const killTargets = killOpen === 'ALL' ? MODES : killOpen ? [killOpen] : []
 
   return (
     <motion.div className="flex h-full flex-col" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
       <TopBar
         engine={engine}
+        engines={engines}
         account={ws.account}
         tick={ws.tick}
         wsConnected={ws.wsConnected}
@@ -137,45 +169,73 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
             <PriceChart engine={engine} cycles={cycles} tickRef={tickRef} />
           </motion.section>
           <motion.section className="h-64 shrink-0" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-            <Journal rows={cycles} sessionPnl={engine?.session_pnl ?? 0} currency={currency} onOpenLog={() => setLogOpen(true)} />
+            <Journal rows={cycles} mode={engine?.config?.mode} sessionPnl={engine?.session_pnl ?? 0} currency={currency} onOpenLog={() => setLogOpen(true)} />
           </motion.section>
         </div>
         <motion.aside
-          className="min-h-0 border-l border-line bg-panel"
+          className="flex min-h-0 flex-col border-l border-line bg-panel"
           initial={{ opacity: 0, x: 12 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.08 }}
         >
-          <ControlPanel
-            engine={engine}
-            tick={ws.tick}
-            floating={ws.floating}
-            currency={currency}
-            onAction={onAction}
-            onKill={() => setKillOpen(true)}
-          />
+          {/* Cycle and Single are separate bots: both can run at once. Both panels stay mounted to keep their forms. */}
+          <div className="flex border-b border-line">
+            {MODES.map((m) => {
+              const on = !!engines[m] && ACTIVE_STATES.includes(engines[m]!.state)
+              return (
+                <button
+                  key={m}
+                  onClick={() => setTab(m)}
+                  className={`relative flex flex-1 items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors ${
+                    tab === m ? 'text-text' : 'text-muted hover:text-text'
+                  }`}
+                >
+                  {m === 'CYCLE' ? 'Cycle' : 'Single'}
+                  {on && <span className="h-1.5 w-1.5 rounded-full bg-up" title={engines[m]!.state} />}
+                  {tab === m && <motion.span layoutId="tab" className="absolute inset-x-6 bottom-0 h-0.5 rounded bg-gold" />}
+                </button>
+              )
+            })}
+          </div>
+          {MODES.map((m) => (
+            <div key={m} className={tab === m ? 'min-h-0 flex-1' : 'hidden'}>
+              <ControlPanel
+                mode={m}
+                engine={engines[m]}
+                tick={ws.tick}
+                floating={ws.floating[m]}
+                currency={currency}
+                onAction={(name, cfg) => onAction(m, name, cfg)}
+                onKill={() => setKillOpen(m)}
+              />
+            </div>
+          ))}
         </motion.aside>
       </div>
 
       <LogDrawer open={logOpen} logs={logs} onClose={() => setLogOpen(false)} />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} running={running} />
       <ConfirmModal
-        open={killOpen}
-        title="Close all & stop?"
+        open={killOpen !== null}
+        title={killOpen === 'ALL' ? 'Close all & stop both bots?' : `Close all & stop the ${killOpen === 'SINGLE' ? 'single' : 'cycle'} bot?`}
         danger
         confirmLabel="Close all & stop"
         body={
           <>
-            Closes <b>every</b> open position with the bot's magic number at market and stops the bot.
-            {engine?.position && (
-              <span className="mt-2 block">
-                Open: C{engine.cycle_no} #{engine.position.ticket} ({engine.position.volume} lots)
-              </span>
-            )}
+            Closes <b>every</b> open position of {killOpen === 'ALL' ? 'the cycle bot and the single bot' : 'this bot'} at
+            market and stops it.
+            {killTargets.map((m) => {
+              const e = engines[m]
+              return e?.position ? (
+                <span key={m} className="mt-2 block">
+                  {m === 'CYCLE' ? 'Cycle' : 'Single'} open: C{e.cycle_no} #{e.position.ticket} ({e.position.volume} lots)
+                </span>
+              ) : null
+            })}
           </>
         }
-        onConfirm={() => onAction('closeAll')}
-        onClose={() => setKillOpen(false)}
+        onConfirm={() => killOpen && closeAll(killOpen)}
+        onClose={() => setKillOpen(null)}
       />
       <Toasts toasts={toasts} dismiss={(id) => setToasts((ts) => ts.filter((t) => t.id !== id))} />
     </motion.div>

@@ -12,7 +12,7 @@ session, what was decided, and where the next session starts. Append a new sessi
 | **Spec (source of truth)** | [CLAUDE.md](CLAUDE.md). Rules, client's worked examples, open questions. |
 | **Stack** | FastAPI + asyncio engine + SQLite · official `MetaTrader5` package (Windows) · Vite/React/TS + Tailwind + lightweight-charts + framer-motion |
 | **Where it runs** | Client's Windows VPS, next to a logged-in MT5 terminal. Dashboard on `http://127.0.0.1:8000` via RDP only. |
-| **Status** | ✅ All 8 build phases from CLAUDE.md §11 done. ✅ Live-tested on an Exness **demo**. ⏳ Waiting on client answers (Q1/Q2/Q5) and the full-session demo run before live. |
+| **Status** | ✅ All 8 build phases from CLAUDE.md §11 done. ✅ Client's new cycle rules (ADR-0018, 2026-11-16) **live-tested with real orders on demo** (Session 2). ✅ Running on the client's VPS (DRY_RUN) with the ADR-0018 code. ⏳ Next: auto-start, full-session demo run with `DRY_RUN=false`, client answer Q5 (Session 2 → "NOT done yet"). |
 
 ### Document map
 
@@ -144,6 +144,159 @@ The most important ones for anyone changing the engine:
 - Bot never enters at the moment of arming ([0002](docs/decisions/0002-touch-trigger-semantics.md)).
 - Never opens while any bot-magic position exists ([0009](docs/decisions/0009-idempotency-and-attach.md)).
 - No `mt5.*` outside `mt5_gateway.py`, one worker thread ([0012](docs/decisions/0012-mt5-single-thread-executor.md)).
+
+### Open items (client)
+| # | Question | Current default |
+|---|---|---|
+| Q5 | Part Two TP/SL as points or exact prices? | points (toggle in Single tab) |
+
+---
+
+## Session 2 — 2026-11-11 → 2026-11-16 — local run, VPS install, live test of the new cycle rules
+
+### State before
+Session 1 left the bot fully built, plus a commit with the client's new rules ([ADR-0018](docs/decisions/0018-cycle-rules-2026-11-16.md),
+`b18dd4e`, pulled this session): **after TP** the next trade opens at once at the previous TP with SL at the previous
+entry; **after SL** the bot no longer stops but re-arms the losing trade at its entry (+ gap in the trade direction);
+**SL is optional** in CYCLE mode. Session 1's open item "observe TP→C2 and a stop-price close live" was still open.
+
+### What was done
+| Item | Result | Files |
+|---|---|---|
+| Local setup on this PC (Python 3.14, Node 22): venv, `npm ci`, build, `.env` | ✅ 52/52 pytest, mypy clean (33 files), ruff clean, `npm run build` clean | `.env` (gitignored) |
+| **Installed on the client's Windows VPS** (step-by-step with the user over RDP) | ✅ Running, connected to MT5, `DRY_RUN=true`; **updated to `b18dd4e`** on 2026-11-16 (`git pull` → `install.bat` → `start.bat`, re-login, WS accepted) | see "VPS state" below |
+| Dry-run tests on live prices, old rules (2026-11-12) | ✅ TP chain C1→C2→C3, SL stop, stop-price close, kill switch, touch trigger. The SL-stop result is superseded by ADR-0018 | — |
+| Pulled `b18dd4e` (ADR-0018) and reviewed the engine diff | ✅ Matches the ADR | — |
+| **Live test of ADR-0018 with real orders** on Exness demo | ✅ All 4 scenarios pass, see below | `backend/tools/live_demo_test.py` (+ `chain slretry slgap nosl`) |
+| Client explainer PDF (English, 2 pages) | ✅ Regenerated for ADR-0018: TP chain with SL at previous entry, SL retry table (gap blank / 2), optional SL, "set a limit" warning | `docs/GoldCycle-How-It-Works.pdf` (untracked) |
+| Test docs | ✅ New scenarios listed | `docs/TESTING.md` §4 |
+
+### Live / demo results (real orders, 2026-11-16)
+Account **474902598 "Gold Cycle Bot"**, Exness-MT5Trial15, demo, hedging, USD 500.70 → **496.10**. XAUUSDm, 0.01 lot,
+magic 7799001. Command: `.\.venv\Scripts\python.exe tools\live_demo_test.py chain slretry slgap nosl`.
+**Balance change −4.60 = sum of the 9 journal P/Ls exactly.** 0 bot positions left.
+
+| Scenario | What happened (TP/SL read back from the **server position**) | Result |
+|---|---|---|
+| `chain` BUY TP 2 / SL 3, max 3 | C1 3868.93 (SL 3865.93) → **TP** +2.10 → C2 opened at once at **3870.93**, server SL **3868.93 = C1 entry** → **TP** +1.84 → C3 planned 3872.93: price had jumped to 3873.52 (> 0.5) → waited for another touch → filled, SL **3870.93 = C2 entry** → SL −2.14 → **not stopped by the SL**; stopped by MAX_CYCLES | ✅ |
+| `slretry` BUY TP 4 / SL 1, gap blank, max 3 | C1 3870.49 SL → "C2 armed at 3870.49" → touch → **same** TP 3874.49 / SL 3869.49 → SL → C3 same again → SL → MAX_CYCLES | ✅ |
+| `slgap` BUY TP 4 / SL 1, gap 1, max 2 | C1 3869.49 SL → "C2 armed at **3870.49**" (+1, BUY up) → touch ~14 min later → TP 3874.49 / SL 3869.49 → SL → MAX_CYCLES | ✅ |
+| `nosl` BUY TP 5, SL blank | Server position **SL 0.0** (Exness accepts no SL), TP 3874.57 → kill switch closed it | ✅ |
+
+### Findings
+#### Finding #1 — 🟡 Fill slippage can be max_slippage + spread (seen live: +0.63 with max 0.5)
+`slgap` C2: bid first seen at 3870.88, 0.39 past the 3870.49 level (inside 0.5) → BUY filled at the ask 3871.12 →
+slip +0.63. This is by design ([ADR-0003](docs/decisions/0003-opening-retry-and-tolerance.md)): the tolerance is measured
+on the trigger-side price (bid), and a BUY then pays the spread (~0.24). Not changed. If the client expects "0.5 max
+on the fill", measure BUY on the ask → would need an ADR. Related: Session 1 Finding #7 (small TPs).
+
+#### Finding #2 — 🟡 SL retry keeps losing in a one-way market; limits are the only brake
+`slretry` lost 3 × ~1.1 in 4 minutes. This is ADR-0018 working as specified, but **live, the trader must set at least
+one of max cycles / daily loss limit / stop price** (retries count as cycles). Say this clearly when handing over.
+
+#### Finding #3 — 🔴→fixed by user: local MT5 was on a deleted demo
+This PC's terminal was on 472611148 @ Exness-MT5Trial16 (`Invalid account` in the terminal log, `-6` in Python), same
+as Session 1 Finding #1. The user pointed to 474902598 @ Trial15; `mt5.initialize()` attached to it.
+
+#### Finding #4 — ⚪ VPS install snags (all solved, worth knowing for the next install)
+- PowerShell **QuickEdit**: a click in the window shows "Select …" in the title and **pauses** the command (looked like
+  Node/MT5 hangs). Press Esc; turn QuickEdit off in Properties.
+- A first `install.bat` run was interrupted → venv without pip ("No module named pip"). Fix: delete `backend\.venv`, rerun.
+- Repo is private: clone with a **fine-grained read-only token for this repo only** (not a full GitHub login on the
+  client's machine). Git Credential Manager stores it, so `git pull` works.
+- Python 3.14 works: `MetaTrader5 5.0.6231` has a cp314 wheel.
+
+#### Finding #5 — ⚪ Algo Trading was off in both terminals
+Local: toggled on with Ctrl+E for the live test, then **back off**. VPS: off (DRY_RUN didn't need it). Must be on for
+`DRY_RUN=false`. The VPS chart also has another EA attached (`Pending_Order_Repeater_Gape_Eight`): **remove it before
+turning Algo Trading on**, or it trades the same account.
+
+### VPS state (client's Windows Server, RDP, user `Administrator`)
+| | |
+|---|---|
+| Bot folder | `C:\Users\Administrator\Desktop\Bot` (git clone of this repo, `main` at **`b18dd4e`**, ADR-0018 rules). Session 2's tool/doc changes reach it only after they are pushed + `git pull` |
+| Installed | Python 3.14.0 (all users, PATH), Node 22.20.0, Git 2.51.0, VS Code |
+| MT5 | Exness terminal, account **474462104** @ Exness-MT5Trial15 (demo, hedge) — a different demo from the local one |
+| `.env` | `BROKER=mt5`, `DRY_RUN=true`, `SYMBOL=XAUUSDm`, admin hash set by the user (password known only to the user) |
+| Runs | `cmd /c ...\scripts\start.bat` in a PowerShell window (verified: "MT5 connected: login=474462104", dashboard on 127.0.0.1:8000) |
+| Auto-start | ✅ Created 2026-11-16: Startup shortcut `MT5.lnk` → `C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe`, and scheduled task **`GoldCycle`** (`/SC ONLOGON` → `scripts\start.bat`). `schtasks /Run /TN GoldCycle` verified: the bot starts in its own `cmd.exe` window (don't close it). **A real reboot is not tested yet.** NSSM not used: a service can't reach the MT5 GUI session |
+
+### Files changed
+`backend/tools/live_demo_test.py` (new scenarios), `docs/TESTING.md` (§4), `HANDOFF.md`. Untracked:
+`docs/GoldCycle-How-It-Works.pdf` (client explainer, ADR-0018 rules). Local `.env`: `BROKER=mt5`, `DRY_RUN=true`, `SYMBOL=XAUUSDm`.
+
+### ⚠️ NOT done yet — next session starts here
+1. ✅ Done 2026-11-16: VPS updated to `b18dd4e`. To update again later (RDP, PowerShell, Ctrl+C in the bot's window
+   first): `cd C:\Users\Administrator\Desktop\Bot; git pull; cmd /c scripts\install.bat; cmd /c scripts\start.bat`,
+   then **Ctrl+F5** in Chrome and log in again. Sessions are in memory, so an open tab logs `WebSocket /ws 403`
+   until it logs in again. That's expected.
+2. On the VPS: `cd backend; .\.venv\Scripts\python.exe tools\live_demo_test.py chain slretry slgap nosl` with Algo
+   Trading **on** and the other EA **removed** (or skip this step and go to 3).
+3. Auto-start is set up (Session 2 "VPS state"). Still to do: reboot the VPS once and check that MT5 and the bot come
+   back by themselves after logon. Close RDP with X, never Sign out. To restart the bot by hand: `schtasks /Run /TN GoldCycle`.
+4. Full trading session on the VPS demo with `DRY_RUN=false`, set limits (Finding #2) → BACKLOG B2, B4.
+5. Client answer Q5 → BACKLOG B1. Still open from Session 1: B7 (DRY_RUN shows a paper balance).
+
+### Decisions made
+None new. ADR-0018 (pulled, written outside this session) is now live-verified.
+
+### Open items (client)
+| # | Question | Current default |
+|---|---|---|
+| Q5 | Part Two TP/SL as points or exact prices? | points (toggle in Single tab) |
+| — | Is "max slippage 0.5" meant on the fill (incl. spread) or on the trigger price? (Finding #1) | trigger price (ADR-0003) |
+
+---
+
+## Session 3 — 2026-11-18 — free stop price, Cycle + Single side by side, two-order cycle
+
+### State before
+Session 2 "NOT done yet" unchanged. Client asked for two rule changes.
+
+### What was done
+| Item | Result | Files |
+|---|---|---|
+| **Stop price is free**: removed "BUY stop must be above trigger / SELL below". Stop above the trigger fires when price rises to it, below when it falls to it (bid for BUY, ask for SELL). Only stop == trigger is rejected | ✅ tests: either side, BUY stop below trigger closes the trade | `engine/models.py`, `engine/levels.py` (`beyond_stop`/`stop_reached` take the cfg), `risk.py`, `cycle_engine.py` |
+| **Cycle and Single run at the same time**: two `CycleEngine`s (`mode=CYCLE` magic `MAGIC`, `mode=SINGLE` magic `MAGIC+1`), so each one's duplicate guard only sees its own trades. Sessions recover per mode. Logs are prefixed `[Cycle]` / `[Single]` | ✅ engine test (both positions open at once), API test (both armed, stop one, close-all both) | `main.py`, `context.py` (`engines`), `api/bot.py` (`?mode=` on stop / stop-after-cycle / resume / close-all; close-all without mode = both), `ws.py` (latest state per mode), `storage/repo.py` |
+| UI: tabs switch between two always-mounted panels (separate saved forms), green dot on a running tab, two state badges in the top bar, chart + journal follow the selected tab. Ctrl+Shift+K closes **both**; the panel button closes that tab's bot | ✅ `tsc`, `npm run build` | `Dashboard.tsx`, `ControlPanel.tsx`, `TopBar.tsx`, `useSocket.ts`, `api.ts`, `types.ts` |
+| Started MT5 (474902598 @ Exness-MT5Trial15) + bot locally, DRY_RUN | ✅ `/health` → both engines IDLE | — |
+| **Two-order cycle** (client, replaces ADR-0018's ladder; CLAUDE.md §4.1): order 1 = entry + TP, no SL → on TP order 2 opens at once at that TP, SL = order 1's entry, no TP → after order 2's SL the next cycle re-arms at the entry (+ gap). `sl_points` and `sl_mode` dropped from CYCLE. Engine tracks `leg` (1/2, persisted, recovered); journal column `cycles.leg` (auto-migrated); comment `GC|c=3.2|session=…`; labels C3.1 / C3.2 | ✅ sim tests rewritten for the client's tables (BUY gap blank, BUY gap 2, SELL gap 2), stop price, max cycles, recovery, reports. Paper run on live prices: see below | `engine/levels.py`, `cycle_engine.py`, `models.py`, `risk.py`, `storage/repo.py`, `reports.py`, ControlPanel (no SL field in Cycle, preview shows both orders), Journal / Reports / chart labels |
+
+Quality gates: **51/51 pytest** (old ladder tests replaced), mypy clean, ruff clean, frontend build clean.
+
+### Findings
+#### Finding #1 — ⚪ Daily loss limit is account-wide
+`realized_pnl_since` sums both bots' cycles, and the daily block stops both. Intended (it's a loss limit on the account).
+
+#### Finding #2 — 🟡 Magic number change for Single
+Single trades now use `MAGIC+1`. A Single position opened **before** this update (with `MAGIC`) would be seen by the Cycle bot's guard. Close any open bot trade before updating the VPS.
+
+#### Finding #3 — 🟡 Order 1 has no SL, order 2 has no TP
+By design (client). Order 1 can sit in a loss with nothing closing it but the stop price, the daily loss limit or
+Stop; order 2 can run in profit with only its SL (at the entry, i.e. break-even minus spread) and the stop price to
+close it. Tell the trader to set a stop price and/or daily loss limit. A cycle that ends on order 2's SL nets about
+minus the spread paid on both orders: order 1 wins TP − spread, order 2 (BUY fills at the ask) loses TP + spread.
+Seen in the paper run below: +0.51 / −0.99 on TP 0.6.
+
+### Live / demo results
+Paper run (DRY_RUN fills) on **live** XAUUSDm prices, CYCLE BUY, TP 0.6, gap blank, max 2 cycles:
+
+| Order | Planned | TP | SL | Result |
+|---|---|---|---|---|
+| C1.1 | 3758.83 | 3759.43 | none | TP +0.51 |
+| C1.2 | 3759.43 (at once) | none | 3758.83 | SL −0.99 |
+| C2.1 | 3758.83 (re-armed, touch) | 3759.43 | none | TP +0.11 |
+| C2.2 | 3759.43 | none | 3758.83 | SL −1.00 → MAX_CYCLES |
+
+Order comment on the position: `GC|c=1.2|session=83b1034d`. Real-order run on demo still to do.
+
+### ⚠️ NOT done yet — next session starts here
+1. Update the VPS (close bot trades first, Finding #2), then test both tabs on demo, Cycle with real orders.
+2. `tools/live_demo_test.py` scenarios `chain slretry slgap nosl` were written for the ADR-0018 ladder; rewrite them for the two-order cycle before using them.
+2. Session 2 items 2–5 still open.
+
+### Decisions made
+Client rules 2026-11-18 recorded in CLAUDE.md §4.5 and §12 (no separate ADR).
 
 ### Open items (client)
 | # | Question | Current default |

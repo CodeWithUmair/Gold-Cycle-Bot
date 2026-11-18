@@ -37,42 +37,24 @@ def sl_price(entry: float, direction: Direction, sl_points: float) -> float:
     return _r(entry - sign(direction) * points_to_price(sl_points))
 
 
-def cycle_sl(
-    entry: float,
-    direction: Direction,
-    sl_points: float | None,
-    sl_mode: str,
-    previous_entry: float | None,
-) -> float | None:
-    """SL for a cycle; None = no SL (allowed in CYCLE mode). sl_mode='previous_entry' (client's rule) puts it
-    at the previous cycle's entry, falling back to points when there is no previous entry or it isn't on the
-    losing side."""
-    if sl_mode == "previous_entry" and previous_entry is not None:
-        if sign(direction) * (entry - previous_entry) > _EPS:
-            return _r(previous_entry)
-    return None if sl_points is None else sl_price(entry, direction, sl_points)
-
-
-def reentry_after_sl(losing_entry: float, direction: Direction, gap: float | None) -> float:
-    """§4.4: after an SL the trade starts again from the losing trade's entry,
+def reentry_after_sl(cycle_entry: float, direction: Direction, gap: float | None) -> float:
+    """§4.4: after order 2's SL the next cycle starts again from this cycle's entry,
     shifted by the gap in the trade direction (Q6, confirmed)."""
-    return _r(losing_entry + sign(direction) * points_to_price(gap or 0.0))
+    return _r(cycle_entry + sign(direction) * points_to_price(gap or 0.0))
 
 
-def beyond_stop(price: float, direction: Direction, stop_price: float | None) -> bool:
-    """True when `price` is at/past the stop price in the cycle's direction."""
-    if stop_price is None:
+def beyond_stop(price: float, cfg: CycleConfig) -> bool:
+    """True when `price` is at/past the stop price. The stop price is free (either side of the trigger):
+    above the trigger it is hit when price rises to it, below the trigger when price falls to it."""
+    if cfg.stop_price is None:
         return False
-    return sign(direction) * (price - stop_price) >= -_EPS
+    side = 1 if cfg.stop_price > cfg.trigger_price else -1
+    return side * (price - cfg.stop_price) >= -_EPS
 
 
-def stop_reached(bid: float, ask: float, direction: Direction, stop_price: float | None) -> bool:
-    """§4.5: BUY stops when bid >= stop; SELL stops when ask <= stop."""
-    if stop_price is None:
-        return False
-    if direction == Direction.BUY:
-        return bid >= stop_price - _EPS
-    return ask <= stop_price + _EPS
+def stop_reached(bid: float, ask: float, cfg: CycleConfig) -> bool:
+    """§4.5, measured on the price the open trade closes at: bid for BUY, ask for SELL."""
+    return beyond_stop(bid if cfg.direction == Direction.BUY else ask, cfg)
 
 
 def lot_for_cycle(lot: float, multiplier: float, cycle_no: int) -> float:
@@ -91,27 +73,32 @@ def round_volume(volume: float, step: float) -> float:
 
 @dataclass(frozen=True)
 class PlannedCycle:
+    """One planned order. CYCLE: leg 1 = entry + TP (no SL); leg 2 = at leg 1's TP, SL at leg 1's entry (no TP)."""
+
     cycle: int
+    leg: int
     entry: float
-    tp: float
+    tp: float | None
     sl: float | None
     lot: float
 
 
 def preview_ladder(cfg: CycleConfig, count: int = 5) -> list[PlannedCycle]:
-    """Next `count` planned cycles assuming every cycle closes on TP (next entry = previous TP).
-    Stops at stop_price / max_cycles."""
+    """The next `count` planned orders (§4.1). CYCLE: each cycle is order 1 then order 2; the next cycle
+    assumes order 2 hit its SL and restarts at the cycle entry (+ gap). Stops at stop_price / max_cycles."""
+    lot = lot_for_cycle(cfg.lot, cfg.lot_multiplier, 1)
+    if cfg.mode == Mode.SINGLE:
+        sl = None if cfg.sl_points is None else sl_price(cfg.trigger_price, cfg.direction, cfg.sl_points)
+        return [PlannedCycle(1, 1, cfg.trigger_price, tp_price(cfg.trigger_price, cfg.direction, cfg.tp_pts), sl, lot)]
     out: list[PlannedCycle] = []
-    entry = cfg.trigger_price
-    prev_entry: float | None = None
-    limit = 1 if cfg.mode == Mode.SINGLE else count
-    if cfg.max_cycles is not None:
-        limit = min(limit, cfg.max_cycles)
-    for n in range(1, limit + 1):
-        if n > 1 and beyond_stop(entry, cfg.direction, cfg.stop_price):
+    entry, n = cfg.trigger_price, 1
+    while len(out) < count and (cfg.max_cycles is None or n <= cfg.max_cycles):
+        if n > 1 and beyond_stop(entry, cfg):
             break
         tp = tp_price(entry, cfg.direction, cfg.tp_pts)
-        sl = cycle_sl(entry, cfg.direction, cfg.sl_points, cfg.sl_mode, prev_entry)
-        out.append(PlannedCycle(n, entry, tp, sl, lot_for_cycle(cfg.lot, cfg.lot_multiplier, n)))
-        prev_entry, entry = entry, tp
+        out.append(PlannedCycle(n, 1, entry, tp, None, lot))
+        if len(out) == count or beyond_stop(tp, cfg):
+            break
+        out.append(PlannedCycle(n, 2, tp, None, entry, lot))
+        entry, n = reentry_after_sl(entry, cfg.direction, cfg.cycle_gap), n + 1
     return out

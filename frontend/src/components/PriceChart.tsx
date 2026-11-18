@@ -15,6 +15,7 @@ import {
 } from 'lightweight-charts'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import { orderLabel } from './ui'
 import type { CycleRow, EngineSnapshot, Tick } from '../types'
 
 const TFS = ['M1', 'M5', 'M15', 'H1', 'H4'] as const
@@ -174,7 +175,7 @@ export function PriceChart({ engine, cycles, tickRef }: Props) {
           position: buy ? 'belowBar' : 'aboveBar',
           shape: buy ? 'arrowUp' : 'arrowDown',
           color: buy ? C.up : C.down,
-          text: `C${c.cycle_no}`,
+          text: orderLabel(c, engine?.config?.mode),
         })
       }
       if (c.close_time && c.close_reason) {

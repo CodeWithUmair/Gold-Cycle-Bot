@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { ACTIVE_STATES, type CycleConfig, type Direction, type EngineSnapshot, type Mode, type Tick, type Validation } from '../types'
-import { NumberTicker, fmt, fmtMoney, pnlColor } from './ui'
+import { NumberTicker, fmt, fmtMoney, orderLabel, pnlColor } from './ui'
 
 interface FormState {
   direction: Direction
@@ -15,7 +15,6 @@ interface FormState {
   slPrice: string
   gap: string
   stop: string
-  slMode: CycleConfig['sl_mode']
   levelAnchor: CycleConfig['level_anchor']
   triggerSide: CycleConfig['trigger_price_side']
   maxSlip: string
@@ -36,7 +35,6 @@ const DEFAULT_FORM: FormState = {
   slPrice: '',
   gap: '',
   stop: '',
-  slMode: 'previous_entry',
   levelAnchor: 'planned',
   triggerSide: 'bid',
   maxSlip: '0.5',
@@ -46,7 +44,8 @@ const DEFAULT_FORM: FormState = {
   hours: '',
 }
 
-const STORE_KEY = 'goldcycle.form.v2' // v2: cycle rules changed 2026-11-16 (SL default, no gap entry mode)
+const STORE_KEY = 'goldcycle.form.v3.' // + mode. v3: Cycle and Single have separate forms (both can run at once)
+const OLD_STORE_KEY = 'goldcycle.form.v2' // the shared form before v3: seeds both
 
 const num = (s: string): number | null => {
   const t = s.trim()
@@ -64,12 +63,11 @@ function toConfig(mode: Mode, f: FormState): Record<string, unknown> {
     lot: num(f.lot),
     tp_sl_input: priceInput ? 'price' : 'points',
     tp_points: priceInput ? null : num(f.tp),
-    sl_points: priceInput ? null : num(f.sl),
+    sl_points: priceInput || mode === 'CYCLE' ? null : num(f.sl), // CYCLE: order 1 no SL, order 2 SL at entry
     tp_price: priceInput ? num(f.tpPrice) : null,
     sl_price: priceInput ? num(f.slPrice) : null,
     cycle_gap: mode === 'CYCLE' ? num(f.gap) : null,
     stop_price: mode === 'CYCLE' ? num(f.stop) : null,
-    sl_mode: f.slMode,
     level_anchor: f.levelAnchor,
     trigger_price_side: f.triggerSide,
     max_slippage_points: num(f.maxSlip) ?? 0.5,
@@ -94,7 +92,6 @@ function fromConfig(c: CycleConfig): FormState {
     slPrice: s(c.sl_price),
     gap: s(c.cycle_gap),
     stop: s(c.stop_price),
-    slMode: c.sl_mode,
     levelAnchor: c.level_anchor,
     triggerSide: c.trigger_price_side,
     maxSlip: s(c.max_slippage_points),
@@ -105,32 +102,30 @@ function fromConfig(c: CycleConfig): FormState {
   }
 }
 
-function loadSaved(): { mode: Mode; form: FormState } {
+function loadSaved(mode: Mode): FormState {
   try {
-    const raw = localStorage.getItem(STORE_KEY)
-    if (raw) {
-      const j = JSON.parse(raw)
-      return { mode: j.mode === 'SINGLE' ? 'SINGLE' : 'CYCLE', form: { ...DEFAULT_FORM, ...j.form } }
-    }
+    const raw = localStorage.getItem(STORE_KEY + mode)
+    if (raw) return { ...DEFAULT_FORM, ...JSON.parse(raw) }
+    const old = localStorage.getItem(OLD_STORE_KEY)
+    if (old) return { ...DEFAULT_FORM, ...JSON.parse(old).form }
   } catch {
     /* storage unavailable: start from defaults */
   }
-  return { mode: 'CYCLE', form: DEFAULT_FORM }
+  return DEFAULT_FORM
 }
 
 interface Props {
+  mode: Mode // this panel drives one engine; Cycle and Single each have their own
   engine: EngineSnapshot | null
   tick: Tick | null
   floating: number | null
   currency: string
-  onAction: (name: 'arm' | 'stop' | 'stopAfterCycle' | 'closeAll' | 'resume', cfg?: unknown) => Promise<void>
+  onAction: (name: 'arm' | 'stop' | 'stopAfterCycle' | 'resume', cfg?: unknown) => Promise<void>
   onKill: () => void
 }
 
-export function ControlPanel({ engine, tick, floating, currency, onAction, onKill }: Props) {
-  const saved = useMemo(loadSaved, [])
-  const [mode, setMode] = useState<Mode>(saved.mode)
-  const [f, setF] = useState<FormState>(saved.form)
+export function ControlPanel({ mode, engine, tick, floating, currency, onAction, onKill }: Props) {
+  const [f, setF] = useState<FormState>(() => loadSaved(mode))
   const [v, setV] = useState<Validation | null>(null)
   const [busy, setBusy] = useState(false)
   const [advanced, setAdvanced] = useState(false)
@@ -142,7 +137,6 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
   // When a session is running (e.g. page reloaded), show its config in the form.
   useEffect(() => {
     if (running && engine?.config) {
-      setMode(engine.config.mode)
       setF(fromConfig(engine.config))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -150,7 +144,7 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ mode, form: f }))
+      localStorage.setItem(STORE_KEY + mode, JSON.stringify(f))
     } catch {
       /* storage unavailable */
     }
@@ -187,23 +181,6 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
 
   return (
     <div className="flex h-full flex-col">
-      {/* tabs */}
-      <div className="flex border-b border-line">
-        {(['CYCLE', 'SINGLE'] as Mode[]).map((m) => (
-          <button
-            key={m}
-            disabled={running}
-            onClick={() => setMode(m)}
-            className={`relative flex-1 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed ${
-              mode === m ? 'text-text' : 'text-muted hover:text-text'
-            }`}
-          >
-            {m === 'CYCLE' ? 'Cycle' : 'Single'}
-            {mode === m && <motion.span layoutId="tab" className="absolute inset-x-6 bottom-0 h-0.5 rounded bg-gold" />}
-          </button>
-        ))}
-      </div>
-
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
         <RunningCard engine={engine} floating={floating} currency={currency} digits={digits} mode={mode} />
 
@@ -273,9 +250,9 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className={`grid gap-3 ${mode === 'SINGLE' ? 'grid-cols-2' : 'grid-cols-1'}`}>
             <div>
-              <label className="label text-up/80">{priceMode ? 'TP price' : 'TP points'}</label>
+              <label className="label text-up/80">{priceMode ? 'TP price' : mode === 'CYCLE' ? 'TP points (order 1)' : 'TP points'}</label>
               <input
                 className="field"
                 inputMode="decimal"
@@ -283,29 +260,31 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
                 onChange={(e) => set(priceMode ? 'tpPrice' : 'tp', e.target.value)}
               />
               <p className="num mt-1 text-xs text-faint">
-                {first ? (priceMode ? `= ${Math.abs(first.tp - first.entry).toFixed(2)} pts` : `@ ${fmt(first.tp, 2)}`) : ' '}
+                {first ? (priceMode ? `= ${Math.abs((first.tp ?? first.entry) - first.entry).toFixed(2)} pts` : `@ ${fmt(first.tp, 2)}`) : ' '}
+                {mode === 'CYCLE' && first && ` · order 2 opens there with SL ${fmt(first.entry, 2)}, no TP`}
               </p>
             </div>
+            {mode === 'SINGLE' && (
             <div>
-              <label className="label text-down/80">{priceMode ? 'SL price' : mode === 'CYCLE' ? 'SL points (optional)' : 'SL points'}</label>
+              <label className="label text-down/80">{priceMode ? 'SL price' : 'SL points'}</label>
               <input
                 className="field"
                 inputMode="decimal"
                 value={priceMode ? f.slPrice : f.sl}
                 onChange={(e) => set(priceMode ? 'slPrice' : 'sl', e.target.value)}
-                placeholder={mode === 'CYCLE' ? 'none' : undefined}
               />
               <p className="num mt-1 text-xs text-faint">
                 {first ? (priceMode ? `= ${fmt(first.sl === null ? null : Math.abs(first.entry - first.sl), 2)} pts` : `@ ${fmt(first.sl, 2)}`) : ' '}
               </p>
             </div>
+            )}
           </div>
 
           {mode === 'CYCLE' && (
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="label">Cycle gap (pts)</label>
-                <input className="field" inputMode="decimal" value={f.gap} onChange={(e) => set('gap', e.target.value)} placeholder="after SL: blank = same entry" />
+                <input className="field" inputMode="decimal" value={f.gap} onChange={(e) => set('gap', e.target.value)} placeholder="after order 2 SL: blank = same entry" />
               </div>
               <div>
                 <label className="label text-warn/80">Stop cycle at price</label>
@@ -329,12 +308,6 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
                 className="overflow-hidden"
               >
                 <div className="grid grid-cols-2 gap-3 rounded-lg border border-line bg-bg/50 p-3">
-                  {mode === 'CYCLE' && (
-                    <>
-                      <Select label="Next SL (Q2)" value={f.slMode} onChange={(x) => set('slMode', x)}
-                        options={[['points', 'Entry − SL pts'], ['previous_entry', 'Previous entry']]} />
-                    </>
-                  )}
                   <Select label="Levels from" value={f.levelAnchor} onChange={(x) => set('levelAnchor', x)}
                     options={[['planned', 'Planned entry'], ['fill', 'Fill price']]} />
                   <Select label="Trigger on" value={f.triggerSide} onChange={(x) => set('triggerSide', x)}
@@ -365,7 +338,7 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
         {/* preview ladder */}
         {v && v.ladder.length > 0 && (
           <div>
-            <p className="label">Preview {mode === 'CYCLE' ? `· next ${v.ladder.length} cycles (if each hits TP)` : ''}</p>
+            <p className="label">Preview {mode === 'CYCLE' ? '· order 1 hits TP, then order 2 hits SL, repeat' : ''}</p>
             <table className="num w-full text-xs">
               <thead className="text-faint">
                 <tr>
@@ -377,10 +350,10 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
               </thead>
               <tbody>
                 {v.ladder.map((c) => (
-                  <tr key={c.cycle} className="border-t border-line/60">
-                    <td className="py-1 text-muted">C{c.cycle}</td>
+                  <tr key={`${c.cycle}.${c.leg}`} className="border-t border-line/60">
+                    <td className="py-1 text-muted">{orderLabel({ cycle_no: c.cycle, leg: c.leg }, mode)}</td>
                     <td className="text-right">{c.entry.toFixed(2)}</td>
-                    <td className="text-right text-up">{c.tp.toFixed(2)}</td>
+                    <td className="text-right text-up">{fmt(c.tp, 2)}</td>
                     <td className="text-right text-down">{fmt(c.sl, 2)}</td>
                   </tr>
                 ))}
@@ -426,8 +399,8 @@ export function ControlPanel({ engine, tick, floating, currency, onAction, onKil
         </button>
         {running && (
           <p className="text-center text-xs leading-snug text-faint">
-            One session runs at a time. To start a different one, stop this session first — the form unlocks when the
-            badge shows STOPPED or IDLE.
+            The {mode === 'CYCLE' ? 'Single' : 'Cycle'} tab is a separate bot and can run at the same time. To change this{' '}
+            {mode === 'CYCLE' ? 'cycle' : 'single trade'}, stop it first — the form unlocks at STOPPED or IDLE.
           </p>
         )}
       </div>
@@ -439,10 +412,10 @@ function HowItWorks({ mode }: { mode: Mode }) {
   const steps =
     mode === 'CYCLE'
       ? [
-          ['Set the levels', 'Direction, trigger price, lot, TP points, optional SL points, gap (used after an SL) and an optional stop price.'],
-          ['Check the preview', 'The table below shows the next 5 cycles exactly as the bot will place them.'],
-          ['Arm', 'The bot waits for price to touch the trigger and opens C1. On TP the next trade opens at once at that TP, with SL at the previous entry.'],
-          ['After an SL', 'The bot waits for price to return to the losing trade\'s entry (+ gap, if set) and starts that trade again.'],
+          ['Set the levels', 'Direction, trigger price, lot, TP points, gap (used after order 2\'s SL) and an optional stop price.'],
+          ['Arm', 'The bot waits for price to touch the trigger and opens order 1 with a TP and no SL.'],
+          ['Order 2', 'When order 1 hits TP, order 2 opens at once at that TP with its SL at order 1\'s entry and no TP. It runs until the SL, the stop price or Stop.'],
+          ['Next cycle', 'When order 2 hits its SL, the bot waits for price to return to the cycle entry (+ gap, if set) and starts again with order 1.'],
           ['It ends by itself', 'On stop price, max cycles or the daily loss limit. Or press Stop. Then edit the form and Arm again for a new session.'],
         ]
       : [
@@ -499,7 +472,7 @@ function RunningCard({ engine, floating, currency, digits, mode }: { engine: Eng
     >
       <div className="flex items-center justify-between">
         <span className="text-muted">
-          {engine.config.mode} {engine.config.direction} · <span className="text-text">C{engine.cycle_no}</span>
+          {engine.config.mode} {engine.config.direction} · <span className="text-text">{orderLabel(engine, engine.config.mode)}</span>
         </span>
         <span className="text-xs text-muted">
           Session P/L{' '}
@@ -513,7 +486,7 @@ function RunningCard({ engine, floating, currency, digits, mode }: { engine: Eng
       {p && (
         <div className="num grid grid-cols-3 gap-2 text-xs">
           <Kv k="Fill" v={fmt(p.fill_price, digits)} />
-          <Kv k="TP / SL" v={`${fmt(p.tp, 2)} / ${fmt(p.sl || null, 2)}`} />
+          <Kv k="TP / SL" v={`${fmt(p.tp || null, 2)} / ${fmt(p.sl || null, 2)}`} />
           <Kv k="Floating" v={<span className={pnlColor(floating)}>{fmtMoney(floating, '')}</span>} />
         </div>
       )}

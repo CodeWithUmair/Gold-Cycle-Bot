@@ -133,7 +133,7 @@ def build_report(cycles: list[dict[str, Any]], sessions: list[dict[str, Any]]) -
 
 
 CSV_COLUMNS = [
-    "session_id", "cycle_no", "direction", "planned_entry", "fill_price", "slippage", "tp", "sl", "volume",
+    "session_id", "cycle_no", "leg", "direction", "planned_entry", "fill_price", "slippage", "tp", "sl", "volume",
     "ticket", "open_time", "close_time", "close_price", "close_reason", "pnl",
 ]  # fmt: skip
 

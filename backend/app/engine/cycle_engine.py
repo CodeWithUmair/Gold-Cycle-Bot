@@ -60,6 +60,7 @@ class CycleEngine:
         symbol: str,
         magic: int,
         emit: Emit = _noop_emit,
+        mode: Mode | None = None,  # set: this engine only runs that mode (Cycle and Single run side by side)
         now: Callable[[], float] = time.time,
         local_time: Callable[[], dtime] = lambda: datetime.now().time(),
         today: Callable[[], date] = date.today,
@@ -69,6 +70,8 @@ class CycleEngine:
         self.symbol = symbol
         self.magic = magic
         self.emit = emit
+        self.mode = mode
+        self._tag = f"[{mode.title()}] " if mode else ""
         self.now = now
         self.local_time = local_time
         self.today = today
@@ -84,6 +87,7 @@ class CycleEngine:
         self.cfg: CycleConfig | None = None
         self.session_id: str | None = None
         self.cycle_no = 0
+        self.leg = 1  # CYCLE: 1 = order 1 (entry + TP, no SL), 2 = order 2 (at order 1's TP, SL at its entry, no TP)
         self.planned_entry: float | None = None
         self.anchor_entry: float | None = None  # planned entry, or fill when level_anchor='fill'
         self.prev_entry: float | None = None
@@ -122,6 +126,7 @@ class CycleEngine:
     # ------------------------------------------------------------------ helpers
 
     def _log(self, msg: str, level: str = "info", toast: bool = False) -> None:
+        msg = self._tag + msg
         getattr(log, "warning" if level == "warn" else level)(msg)
         self.repo.add_event(self.session_id, level, msg, None, None)
         payload = {"ts": self.now(), "level": level, "msg": msg}
@@ -139,6 +144,7 @@ class CycleEngine:
     def _runtime(self) -> dict[str, Any]:
         return {
             "cycle_no": self.cycle_no,
+            "leg": self.leg,
             "planned_entry": self.planned_entry,
             "anchor_entry": self.anchor_entry,
             "prev_entry": self.prev_entry,
@@ -165,6 +171,7 @@ class CycleEngine:
         self.state = new
         if new != BotState.ARMED:
             self.waiting = None
+        msg = self._tag + msg
         self._persist()
         getattr(log, "warning" if level == "warn" else level)(msg)
         self.repo.add_event(self.session_id, level, msg, old, new)
@@ -192,8 +199,14 @@ class CycleEngine:
         if self.session_id:
             self.repo.end_session(self.session_id)
 
+    @property
+    def _c(self) -> str:
+        """Order label for logs: C3.1 / C3.2 in CYCLE mode (cycle 3, order 1 or 2), C1 in SINGLE."""
+        two_legs = self.cfg is not None and self.cfg.mode == Mode.CYCLE
+        return f"C{self.cycle_no}.{self.leg}" if two_legs else f"C{self.cycle_no}"
+
     def _comment(self) -> str:
-        return f"GC|cycle={self.cycle_no}|session={self.session_id}"
+        return f"GC|c={self.cycle_no}.{self.leg}|session={self.session_id}"  # MT5 keeps 31 chars
 
     def _is_ours(self, p: Position) -> bool:
         return f"session={self.session_id}" in p.comment
@@ -204,20 +217,24 @@ class CycleEngine:
         slip = self.cfg.max_slippage_points if self.cfg else DEFAULT_SLIPPAGE_POINTS
         return max(1, round(levels.points_to_price(slip) / self.spec.point))
 
-    def _levels_for(self, entry: float) -> tuple[float, float | None]:
+    def _levels_for(self, entry: float) -> tuple[float | None, float | None]:
+        """(TP, SL) for the current order; None = not set. CYCLE order 1: TP only. Order 2: SL at order 1's entry."""
         cfg = self.cfg
         assert cfg
+        if cfg.mode == Mode.CYCLE and self.leg == 2:
+            return None, self.prev_entry
         tp = levels.tp_price(entry, cfg.direction, cfg.tp_pts)
-        sl = levels.cycle_sl(entry, cfg.direction, cfg.sl_points, cfg.sl_mode, self.prev_entry)
-        return tp, sl
+        if cfg.mode == Mode.CYCLE or cfg.sl_points is None:
+            return tp, None
+        return tp, levels.sl_price(entry, cfg.direction, cfg.sl_points)
 
     def _rp(self, price: float) -> float:
         assert self.spec
         return levels.round_price(price, self.spec.digits)
 
-    def _rp_sl(self, sl: float | None) -> float:
-        """SL as sent to the broker / stored: rounded, 0.0 = no SL."""
-        return 0.0 if sl is None else self._rp(sl)
+    def _rp0(self, price: float | None) -> float:
+        """TP/SL as sent to the broker / stored: rounded, 0.0 = not set (MT5 convention)."""
+        return 0.0 if price is None else self._rp(price)
 
     def _start_of_day_ts(self) -> float:
         d = self.today()
@@ -230,12 +247,11 @@ class CycleEngine:
         cfg = self.cfg
         if not cfg or cfg.mode != Mode.CYCLE or self.state not in ACTIVE:
             return None
-        # Where the next cycle starts if this one closes on TP: at this cycle's TP.
-        if self.cur_tp is not None:
-            return self.cur_tp
         if self.planned_entry is None:
             return None
-        return self._levels_for(self.planned_entry)[0]
+        if self.leg == 2:  # order 2 has no TP; after its SL the next cycle restarts at the cycle entry (+ gap)
+            return levels.reentry_after_sl(self.prev_entry or self.planned_entry, cfg.direction, cfg.cycle_gap)
+        return self.cur_tp if self.cur_tp is not None else self._levels_for(self.planned_entry)[0]
 
     def snapshot(self) -> dict[str, Any]:
         cfg = self.cfg
@@ -243,12 +259,14 @@ class CycleEngine:
         if tp is None and self.planned_entry is not None and cfg:
             tp, sl = self._levels_for(self.planned_entry)
         return {
+            "mode": self.mode,
             "state": self.state,
             "session_id": self.session_id,
             "symbol": self.symbol,
             "connected": self.connected,
             "config": cfg.model_dump(mode="json") if cfg else None,
             "cycle_no": self.cycle_no,
+            "leg": self.leg,
             "trigger_level": self.trigger.level if self.trigger else None,
             "planned_entry": self.planned_entry,
             "tp": tp,
@@ -270,6 +288,8 @@ class CycleEngine:
 
     async def arm(self, cfg: CycleConfig) -> None:
         async with self.lock:
+            if self.mode and cfg.mode != self.mode:
+                raise EngineError(f"This is the {self.mode} engine, got a {cfg.mode} config")
             if self.state in ACTIVE:
                 raise EngineError("Bot is already running — stop it first")
             if not self.connected:
@@ -300,11 +320,11 @@ class CycleEngine:
             self._arm_trigger(tick)
             gap = "blank" if cfg.cycle_gap is None else f"{cfg.cycle_gap:g}"
             extra = f", gap {gap}, stop {cfg.stop_price or '—'}" if cfg.mode == Mode.CYCLE else ""
-            sl = "none" if cfg.sl_points is None else f"{cfg.sl_points:g}"
+            sl = "order 1 no SL, order 2 SL at entry" if cfg.mode == Mode.CYCLE else f"SL {cfg.sl_points:g} pts"
             self._set_state(
                 BotState.ARMED,
-                f"{cfg.mode} {cfg.direction} armed: C1 at {cfg.trigger_price:.2f}, lot {cfg.lot}, "
-                f"TP {cfg.tp_pts:g} / SL {sl} pts{extra}",
+                f"{cfg.mode} {cfg.direction} armed: {self._c} at {cfg.trigger_price:.2f}, lot {cfg.lot}, "
+                f"TP {cfg.tp_pts:g} pts, {sl}{extra}",
                 toast=True,
             )
 
@@ -337,7 +357,7 @@ class CycleEngine:
                 return
             self.stop_after_cycle = True
             self._persist()
-            self._log(f"Will stop after C{self.cycle_no} closes", toast=True)
+            self._log(f"Will stop after {self._c} closes", toast=True)
             self._emit_state()
 
     async def close_all_and_stop(self) -> None:
@@ -356,7 +376,7 @@ class CycleEngine:
                 self._log("Kill switch: could not close " + ", ".join(failures), "error", toast=True)
             if tracked is not None and self.state == BotState.IN_POSITION:
                 self.pending_close = CloseReason.KILL_SWITCH
-                self._log(f"Kill switch: closing C{self.cycle_no} #{tracked}", "warn", toast=True)
+                self._log(f"Kill switch: closing {self._c} #{tracked}", "warn", toast=True)
                 await self._try_close_tracked()
                 self._persist()
                 self._emit_state()
@@ -397,13 +417,13 @@ class CycleEngine:
                 live = next((p for p in ps if p.ticket == self.position.ticket), None)
                 if live:
                     self._set_state(
-                        BotState.IN_POSITION, f"Resumed: reattached to C{self.cycle_no} #{live.ticket}", toast=True
+                        BotState.IN_POSITION, f"Resumed: reattached to {self._c} #{live.ticket}", toast=True
                     )
                 else:
                     self._resolve_started = self.now()
                     self._set_state(
                         BotState.RESOLVING,
-                        f"Resumed: C{self.cycle_no} #{self.position.ticket} closed while the bot was down, resolving",
+                        f"Resumed: {self._c} #{self.position.ticket} closed while the bot was down, resolving",
                         toast=True,
                     )
                     await self._on_resolving(tick)
@@ -419,7 +439,7 @@ class CycleEngine:
             self._arm_trigger(tick)
             self._set_state(
                 BotState.ARMED,
-                f"Resumed ({target}): C{self.cycle_no} armed at {self.planned_entry:.2f}",
+                f"Resumed ({target}): {self._c} armed at {self.planned_entry:.2f}",
                 toast=True,
             )
 
@@ -427,7 +447,7 @@ class CycleEngine:
 
     async def recover(self, auto_resume: bool) -> None:
         """Load the last unfinished session after a restart (CLAUDE.md §7)."""
-        row = self.repo.last_open_session()
+        row = self.repo.last_open_session(self.mode)
         if row is None:
             return
         rt: dict[str, Any] = json.loads(row["runtime_json"] or "{}")
@@ -441,6 +461,7 @@ class CycleEngine:
         self.session_id = row["id"]
         self.symbol = row["symbol"]
         self.cycle_no = rt.get("cycle_no", 0)
+        self.leg = rt.get("leg", 1)
         self.planned_entry = rt.get("planned_entry")
         self.anchor_entry = rt.get("anchor_entry")
         self.prev_entry = rt.get("prev_entry")
@@ -463,7 +484,7 @@ class CycleEngine:
             self.stop_reason = "RESTART"
             self._set_state(
                 BotState.STOPPED,
-                f"Bot restarted while {resume_state} (session {self.session_id}, C{self.cycle_no}). Resume?",
+                f"Bot restarted while {resume_state} (session {self.session_id}, {self._c}). Resume?",
                 "warn",
                 toast=True,
             )
@@ -499,7 +520,8 @@ class CycleEngine:
 
     async def _try_reconnect(self) -> None:
         try:
-            await self.broker.reconnect()
+            if not await self.broker.is_connected():  # the other engine may have reconnected already
+                await self.broker.reconnect()
             if await self.broker.is_connected():
                 self.connected = True
                 await self.load_symbol()
@@ -537,7 +559,7 @@ class CycleEngine:
                 msg = f"Daily loss limit {cfg.daily_loss_limit} hit (today {pnl_today:+.2f})"
                 if self.state == BotState.IN_POSITION:
                     self.pending_close = CloseReason.DAILY_LOSS
-                    self._log(f"{msg} — closing C{self.cycle_no}", "error", toast=True)
+                    self._log(f"{msg} — closing {self._c}", "error", toast=True)
                 elif self.state != BotState.RESOLVING:
                     self._stop("DAILY_LOSS", f"{msg} — bot stopped", "error")
                     return
@@ -545,11 +567,11 @@ class CycleEngine:
         if (
             self.cycles_opened > 0
             and self.pending_close is None
-            and levels.stop_reached(tick.bid, tick.ask, cfg.direction, cfg.stop_price)
+            and levels.stop_reached(tick.bid, tick.ask, cfg)
         ):
             if self.state == BotState.IN_POSITION:
                 self.pending_close = CloseReason.STOP_PRICE
-                self._log(f"Stop price {cfg.stop_price} reached — closing C{self.cycle_no}", "warn", toast=True)
+                self._log(f"Stop price {cfg.stop_price} reached — closing {self._c}", "warn", toast=True)
             elif self.state in (BotState.ARMED, BotState.OPENING):
                 self._stop("STOP_PRICE", f"Stop price {cfg.stop_price} reached — bot stopped")
                 return
@@ -570,7 +592,7 @@ class CycleEngine:
         price = trigger_price(tick, self.cfg.trigger_price_side)
         if self.trigger.update(price):
             self._set_state(
-                BotState.OPENING, f"C{self.cycle_no} trigger {self.trigger.level:.2f} touched ({price:.2f})"
+                BotState.OPENING, f"{self._c} trigger {self.trigger.level:.2f} touched ({price:.2f})"
             )
             self.trigger = None
             await self._on_opening(tick)
@@ -583,7 +605,7 @@ class CycleEngine:
     def _set_waiting(self, msg: str) -> None:
         if self.waiting != msg:
             self.waiting = msg
-            self._log(f"C{self.cycle_no}: {msg}", "warn")
+            self._log(f"{self._c}: {msg}", "warn")
             self._emit_state()
 
     async def _on_opening(self, tick: Tick) -> None:
@@ -596,7 +618,7 @@ class CycleEngine:
             self._arm_trigger(tick)
             self._set_state(
                 BotState.ARMED,
-                f"C{self.cycle_no}: price {price:.2f} is more than {cfg.max_slippage_points:g} pts from "
+                f"{self._c}: price {price:.2f} is more than {cfg.max_slippage_points:g} pts from "
                 f"{planned:.2f} — waiting for another touch",
                 "warn",
             )
@@ -632,8 +654,8 @@ class CycleEngine:
             self.symbol,
             cfg.direction,
             volume,
-            self._rp_sl(sl),
-            self._rp(tp),
+            self._rp0(sl),
+            self._rp0(tp),
             self._deviation(),
             self.magic,
             self._comment(),
@@ -641,11 +663,11 @@ class CycleEngine:
         if res.ok and res.ticket is not None:
             await self._on_filled(res.ticket, res.price or planned, tp, sl, volume)
         elif res.fatal:
-            self._stop("ORDER_ERROR", f"C{self.cycle_no} order failed: {res.message} ({res.retcode})", "error")
+            self._stop("ORDER_ERROR", f"{self._c} order failed: {res.message} ({res.retcode})", "error")
         else:
-            self._alert(f"C{self.cycle_no} order rejected: {res.message} ({res.retcode}) — retrying")
+            self._alert(f"{self._c} order rejected: {res.message} ({res.retcode}) — retrying")
 
-    async def _on_filled(self, ticket: int, fill: float, tp: float, sl: float | None, volume: float) -> None:
+    async def _on_filled(self, ticket: int, fill: float, tp: float | None, sl: float | None, volume: float) -> None:
         cfg = self.cfg
         assert cfg and self.planned_entry is not None
         planned = self.planned_entry
@@ -654,29 +676,30 @@ class CycleEngine:
         if cfg.level_anchor == "fill":
             self.anchor_entry = fill
             tp, sl = self._levels_for(fill)
-            res = await self.broker.modify_position(self.symbol, ticket, self._rp_sl(sl), self._rp(tp))
+            res = await self.broker.modify_position(self.symbol, ticket, self._rp0(sl), self._rp0(tp))
             if not res.ok:
                 self._log(
-                    f"C{self.cycle_no}: could not move TP/SL to fill-anchored levels ({res.message}); "
+                    f"{self._c}: could not move TP/SL to fill-anchored levels ({res.message}); "
                     "planned TP/SL stay on the position",
                     "error",
                     toast=True,
                 )
                 self.anchor_entry = planned
                 tp, sl = self._levels_for(planned)
-        self.cur_tp, self.cur_sl = self._rp(tp), None if sl is None else self._rp(sl)
-        self.position = LivePosition(ticket, fill, self.cur_tp, self._rp_sl(sl), volume, self.now())
+        self.cur_tp, self.cur_sl = (None if tp is None else self._rp(tp)), (None if sl is None else self._rp(sl))
+        self.position = LivePosition(ticket, fill, self._rp0(tp), self._rp0(sl), volume, self.now())
         self.floating = 0.0
         self.cycles_opened += 1
         assert self.session_id
         self.cycle_row_id = self.repo.insert_cycle(
             session_id=self.session_id,
             cycle_no=self.cycle_no,
+            leg=self.leg,
             direction=cfg.direction,
             planned_entry=planned,
             fill_price=fill,
             slippage=slip,
-            tp=self.cur_tp,
+            tp=self.position.tp,
             sl=self.position.sl,
             volume=volume,
             ticket=ticket,
@@ -685,8 +708,9 @@ class CycleEngine:
         self._emit_cycle()
         self._set_state(
             BotState.IN_POSITION,
-            f"C{self.cycle_no} filled {cfg.direction} {volume} @ {fill:.2f} (planned {planned:.2f}, "
-            f"slip {slip:+.2f}) TP {self.cur_tp:.2f} SL {'none' if self.cur_sl is None else f'{self.cur_sl:.2f}'}",
+            f"{self._c} filled {cfg.direction} {volume} @ {fill:.2f} (planned {planned:.2f}, "
+            f"slip {slip:+.2f}) TP {'none' if self.cur_tp is None else f'{self.cur_tp:.2f}'} "
+            f"SL {'none' if self.cur_sl is None else f'{self.cur_sl:.2f}'}",
             toast=True,
         )
 
@@ -695,17 +719,17 @@ class CycleEngine:
         cfg = self.cfg
         assert cfg and self.planned_entry is not None and self.session_id
         self.anchor_entry = self.planned_entry
-        self.cur_tp, self.cur_sl = p.tp, p.sl or None
+        self.cur_tp, self.cur_sl = p.tp or None, p.sl or None
         self.position = LivePosition(p.ticket, p.price_open, p.tp, p.sl, p.volume, p.time)
         self.cycles_opened += 1
         slip = round(levels.sign(cfg.direction) * levels.price_to_points(p.price_open - self.planned_entry), 2)
         self.cycle_row_id = self.repo.insert_cycle(
-            session_id=self.session_id, cycle_no=self.cycle_no, direction=cfg.direction,
+            session_id=self.session_id, cycle_no=self.cycle_no, leg=self.leg, direction=cfg.direction,
             planned_entry=self.planned_entry, fill_price=p.price_open, slippage=slip, tp=p.tp, sl=p.sl,
             volume=p.volume, ticket=p.ticket, open_time=p.time,
         )  # fmt: skip
         self._emit_cycle()
-        self._set_state(BotState.IN_POSITION, f"C{self.cycle_no}: attached to existing position #{p.ticket}", "warn")
+        self._set_state(BotState.IN_POSITION, f"{self._c}: attached to existing position #{p.ticket}", "warn")
 
     async def _try_close_tracked(self) -> bool:
         """Send a market close for the tracked position. Returns True if the broker accepted it."""
@@ -717,7 +741,7 @@ class CycleEngine:
         res = await self.broker.close_position(live, self._deviation())
         if not res.ok:
             self._alert(
-                f"Close of C{self.cycle_no} #{live.ticket} ({self.pending_close}) rejected: "
+                f"Close of {self._c} #{live.ticket} ({self.pending_close}) rejected: "
                 f"{res.message} ({res.retcode}) — retrying every tick"
             )
         return res.ok
@@ -728,12 +752,12 @@ class CycleEngine:
         live = next((p for p in ps if p.ticket == self.position.ticket), None)
         if live is None:
             self._resolve_started = self.now()
-            self._set_state(BotState.RESOLVING, f"C{self.cycle_no} #{self.position.ticket} closed — resolving")
+            self._set_state(BotState.RESOLVING, f"{self._c} #{self.position.ticket} closed — resolving")
             await self._on_resolving(tick)
             return
         if live.profit != self.floating:
             self.floating = live.profit
-            self.emit("floating", {"profit": live.profit})
+            self.emit("floating", {"profit": live.profit, "mode": self.mode})
         if self.pending_close is not None:
             await self._try_close_tracked()
 
@@ -768,8 +792,8 @@ class CycleEngine:
         price = info.price if info else (tick.bid if cfg.direction == "BUY" else tick.ask)
         pnl = info.profit if info else 0.0
         if info is None:
-            self._log(f"C{self.cycle_no}: closing deal not found in history; P/L unknown", "error", toast=True)
-        n = self.cycle_no
+            self._log(f"{self._c}: closing deal not found in history; P/L unknown", "error", toast=True)
+        n = self._c
         if self.cycle_row_id is not None:
             self.repo.update_cycle(
                 self.cycle_row_id,
@@ -783,7 +807,7 @@ class CycleEngine:
         self.floating = 0.0
         self.position = None
         self.pending_close = None
-        result = f"C{n} {reason} at {price:.2f} {pnl:+.2f}"
+        result = f"{n} {reason} at {price:.2f} {pnl:+.2f}"
 
         if reason == CloseReason.TP:
             if cfg.mode == Mode.SINGLE:
@@ -795,48 +819,54 @@ class CycleEngine:
             if cfg.mode == Mode.SINGLE:
                 self._finish_single(f"{result} — single trade complete", "warn")
             else:
-                self._log(f"C{n} hit SL at {price:.2f} ({pnl:+.2f})", "warn", toast=True)
+                self._log(f"{n} hit SL at {price:.2f} ({pnl:+.2f})", "warn", toast=True)
                 await self._start_next_cycle(tick, after_sl=True)
         elif reason == CloseReason.MANUAL:
-            self._stop("MANUAL_CLOSE", f"C{n} was closed manually in MT5 ({pnl:+.2f}) — bot stopped", "warn")
+            self._stop("MANUAL_CLOSE", f"{n} was closed manually in MT5 ({pnl:+.2f}) — bot stopped", "warn")
         elif reason in (CloseReason.STOP_PRICE, CloseReason.KILL_SWITCH, CloseReason.DAILY_LOSS):
             self._stop(reason, f"{result} — bot stopped", "warn")
         else:
             self._stop(reason, f"{result} — unexpected close, bot stopped", "error")
 
     async def _start_next_cycle(self, tick: Tick, after_sl: bool = False) -> None:
-        """After TP: the next trade opens at once at the previous TP, SL at the previous entry.
-        After SL: the losing trade is retried from its entry (+ gap), waiting for price to touch it."""
+        """CYCLE (§4.1): order 1 hit TP -> order 2 opens at once at that TP, SL at order 1's entry, no TP.
+        Order 2 hit SL -> the cycle is over; the next cycle waits for price to touch the cycle entry (+ gap)."""
         cfg = self.cfg
-        assert cfg and self.anchor_entry is not None and self.cur_tp is not None
-        n = self.cycle_no
+        assert cfg and self.anchor_entry is not None
+        label, n = self._c, self.cycle_no
         if self.stop_after_cycle:
-            self._stop("STOP_AFTER_CYCLE", f"Stopped after C{n} as requested")
+            self._stop("STOP_AFTER_CYCLE", f"Stopped after {label} as requested")
             return
-        if cfg.max_cycles is not None and n >= cfg.max_cycles:
-            self._stop("MAX_CYCLES", f"Max cycles ({cfg.max_cycles}) reached — bot stopped")
-            return
-        if after_sl:
-            nxt = levels.reentry_after_sl(self.anchor_entry, cfg.direction, cfg.cycle_gap)
+        cycle_over = self.leg == 2 or after_sl  # after_sl on order 1 = an SL someone added in MT5
+        if cycle_over:
+            if cfg.max_cycles is not None and n >= cfg.max_cycles:
+                self._stop("MAX_CYCLES", f"Max cycles ({cfg.max_cycles}) reached — bot stopped")
+                return
+            cycle_entry = self.prev_entry if self.leg == 2 and self.prev_entry is not None else self.anchor_entry
+            nxt = levels.reentry_after_sl(cycle_entry, cfg.direction, cfg.cycle_gap)
         else:
+            assert self.cur_tp is not None
             nxt = self.cur_tp
-        if levels.beyond_stop(nxt, cfg.direction, cfg.stop_price):
+        if levels.beyond_stop(nxt, cfg):
             self._stop("STOP_PRICE", f"Next entry {nxt:.2f} is at/beyond stop price {cfg.stop_price} — bot stopped")
             return
-        if not after_sl:
-            self.prev_entry = self.anchor_entry  # a retry after SL keeps the losing trade's SL reference
-        self.cycle_no = n + 1
+        if cycle_over:
+            self.cycle_no, self.leg, self.prev_entry = n + 1, 1, None
+        else:
+            self.leg, self.prev_entry = 2, self.anchor_entry
         self.planned_entry = nxt
         self.anchor_entry = None
         self.cur_tp = self.cur_sl = None
         self.cycle_row_id = None
         self._last_order_attempt = 0.0
-        if not after_sl:
-            self._set_state(BotState.OPENING, f"C{self.cycle_no} opening at market (planned {nxt:.2f})")
+        if not cycle_over:
+            self._set_state(
+                BotState.OPENING, f"{self._c} opening at market (planned {nxt:.2f}, SL {self.prev_entry:.2f}, no TP)"
+            )
             await self._on_opening(tick)
         else:
             self._arm_trigger(tick)
-            self._set_state(BotState.ARMED, f"C{self.cycle_no} armed at {nxt:.2f}")
+            self._set_state(BotState.ARMED, f"{self._c} armed at {nxt:.2f}")
 
     def _emit_cycle(self) -> None:
         if self.cycle_row_id is not None:

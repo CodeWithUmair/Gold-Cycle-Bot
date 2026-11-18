@@ -1,4 +1,4 @@
-import type { Account, Candle, CycleRow, EngineSnapshot, Report, SymbolSpec, Tick, Validation } from './types'
+import type { Account, Candle, CycleRow, EngineSnapshot, Mode, PerMode, Report, SymbolSpec, Tick, Validation } from './types'
 
 let csrf = ''
 
@@ -38,7 +38,7 @@ interface Me {
 }
 
 export interface StatusResponse {
-  engine: EngineSnapshot
+  engines: PerMode<EngineSnapshot>
   account: Account | null
   tick: Tick | null
   broker: string
@@ -77,10 +77,11 @@ export const api = {
   status: () => req<StatusResponse>('GET', '/api/bot/status'),
   validate: (cfg: unknown) => req<Validation>('POST', '/api/bot/validate', cfg),
   arm: (cfg: unknown) => req<EngineSnapshot>('POST', '/api/bot/arm', cfg),
-  stop: () => req<EngineSnapshot>('POST', '/api/bot/stop'),
-  stopAfterCycle: () => req<EngineSnapshot>('POST', '/api/bot/stop-after-cycle'),
-  closeAll: () => req<EngineSnapshot>('POST', '/api/bot/close-all'),
-  resume: () => req<EngineSnapshot>('POST', '/api/bot/resume'),
+  stop: (mode: Mode) => req<EngineSnapshot>('POST', `/api/bot/stop?mode=${mode}`),
+  stopAfterCycle: (mode: Mode) => req<EngineSnapshot>('POST', `/api/bot/stop-after-cycle?mode=${mode}`),
+  /** no mode = both engines */
+  closeAll: (mode?: Mode) => req<EngineSnapshot>('POST', `/api/bot/close-all${mode ? `?mode=${mode}` : ''}`),
+  resume: (mode: Mode) => req<EngineSnapshot>('POST', `/api/bot/resume?mode=${mode}`),
 
   candles: (tf: string, count = 600) => req<Candle[]>('GET', `/api/candles?tf=${tf}&count=${count}`),
   cycles: (sessionId?: string | null) =>
