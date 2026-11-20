@@ -178,14 +178,6 @@ function EditLevels({ tp, sl, digits, onModify }: { tp: number | null; sl: numbe
   )
 }
 
-function RemoveBtn({ what, onClick }: { what: string; onClick: () => void }) {
-  return (
-    <button type="button" onClick={onClick} title={`Remove the ${what}`} aria-label={`Remove the ${what}`} className="rounded px-0.5 text-faint hover:bg-down/15 hover:text-down">
-      ×
-    </button>
-  )
-}
-
 export interface Draft {
   entry: number | null
   tp: number | null
@@ -624,7 +616,7 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
         <button className="btn w-full border border-down/50 text-down hover:bg-down/15" disabled={busy} onClick={onKill} title="Ctrl+Shift+K">
           Close all & stop
         </button>
-        {running && (
+        {running && mode === 'CYCLE' && (
           <p className="text-center text-xs leading-snug text-faint">
             The {mode === 'CYCLE' ? 'Single' : 'Cycle'} tab is a separate bot and can run at the same time. To change this{' '}
             {mode === 'CYCLE' ? 'cycle' : 'single trade'}, stop it first — the form unlocks at STOPPED or IDLE.
@@ -672,6 +664,8 @@ function RunningCard({ engine, floating, currency, digits, mode, onModify }: { e
   const p = engine.position
   // Single: a trade left open by "Stop now" still shows here (its TP/SL can be changed); otherwise no card
   const ended = !ACTIVE_STATES.includes(engine.state) && !(mode === 'SINGLE' && p)
+  // Single: TP/SL are edited in place (boxes below); the compact "TP / SL" column only for Cycle
+  const editable = !!p && !!onModify && mode === 'SINGLE' && !engine.pending_close
   if (ended) {
     if (mode === 'SINGLE') return null // client: no "Last session" card in Single (history is in the journal/Reports)
     return (
@@ -713,27 +707,16 @@ function RunningCard({ engine, floating, currency, digits, mode, onModify }: { e
       {engine.waiting && <p className="text-xs text-info">{engine.waiting}</p>}
       {engine.pending_close && <p className="text-xs text-warn">Closing position ({engine.pending_close})…</p>}
       {p && (
-        <div className="num grid grid-cols-3 gap-2 text-xs">
+        <div className={`num grid gap-2 text-xs ${editable ? 'grid-cols-2' : 'grid-cols-3'}`}>
           <Kv k="Fill" v={fmt(p.fill_price, digits)} />
-          <Kv
-            k="TP / SL"
-            v={
-              <span className="inline-flex items-center gap-1">
-                <span className="text-up/90">{fmt(engine.tp, 2)}</span>
-                {onModify && engine.tp !== null && <RemoveBtn what="TP" onClick={() => onModify(null, engine.sl)} />}
-                <span className="text-faint">/</span>
-                <span className="text-down/90">{fmt(engine.sl, 2)}</span>
-                {onModify && engine.sl !== null && <RemoveBtn what="SL" onClick={() => onModify(engine.tp, null)} />}
-              </span>
-            }
-          />
+          {!editable && <Kv k="TP / SL" v={`${fmt(engine.tp, 2)} / ${fmt(engine.sl, 2)}`} />}
           <Kv k="Floating" v={<span className={pnlColor(floating)}>{fmtMoney(floating, '')}</span>} />
         </div>
       )}
-      {p && onModify && mode === 'SINGLE' && !engine.pending_close && (
+      {editable && onModify && (
         <>
           <EditLevels tp={engine.tp} sl={engine.sl} digits={digits} onModify={onModify} />
-          <p className="text-[11px] text-faint">Or drag the TP/SL lines on the chart (drag the entry line to add one).</p>
+          <p className="text-[11px] text-faint">Clear a box and Set to remove it. Or drag the TP/SL lines on the chart (drag the entry line to add one).</p>
         </>
       )}
     </motion.div>
