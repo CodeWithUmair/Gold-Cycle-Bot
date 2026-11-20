@@ -308,7 +308,7 @@ Confirmed:
 - Price already past the trigger at arm time → don't enter; wait for price to come back to the trigger, then start.
 - (2026-11-18) Stop price is free: no "must be above/below the trigger" rule (§4.5).
 - (2026-11-20) Single: TP and SL are both optional (any combination, points or exact prices).
-- (2026-11-20) Single: "Buy/Sell now at market" (`enter_now`, levels from the live price) and TP/SL can be picked by clicking the chart.
+- (2026-11-20) Single: "Buy/Sell now at market" (`enter_now`, opens with **no TP/SL**; the trader sets them on the open trade) and TP/SL can be picked by clicking the chart.
 - (2026-11-20) Single: the open trade's TP/SL can be dragged on the chart (add / move / remove), like Exness. Not in CYCLE (its levels are the cycle rules).
 - (2026-11-18) Cycle and Single are separate bots and can run at the same time: two engines, Single uses `magic + 1`. "One trade at a time" (§2) is per bot.
 

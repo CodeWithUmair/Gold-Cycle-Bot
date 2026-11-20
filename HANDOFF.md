@@ -327,6 +327,7 @@ Session 3 pushed (`7b3aee2`, `986766a`). VPS still on `b18dd4e`.
 | Buy/Sell now no longer overwrites the form's trigger field with the entry price (caused "Price is exactly at the trigger") | ✅ build | `ControlPanel.tsx`, `types.ts` |
 
 | 🔴→fixed **Single Stop left the trade open** (client): in SINGLE, Stop is now **Close trade** (at market, `CloseReason.CLOSED`, retried every tick if the broker refuses, then IDLE) and **Cancel** before the fill. Also closes a trade left open by the old Stop. Buy/Sell/Arm are hidden while a Single trade is open (no more "A bot position is still open" toasts). CYCLE's Stop now is unchanged (trade stays with its server-side TP/SL) | ✅ 3 tests | `cycle_engine.py`, `models.py`, `ControlPanel.tsx`, `Journal.tsx` |
+| **Buy/Sell now opens with no TP/SL** (client, after the VPS test): the form's TP/SL apply only to "Arm at trigger price"; the trader sets TP/SL on the open trade (chart drag / boxes). Replaces the earlier "both buttons use the form's TP/SL" | ✅ build | `ControlPanel.tsx` |
 | **Set TP/SL after Buy/Sell by typing** (client): TP/SL price boxes + Set in the open-trade card (blank = none), same `/modify` as the chart drag | ✅ build | `ControlPanel.tsx` |
 
 Quality gates: **99/99 pytest**, mypy clean, ruff clean, frontend build clean.

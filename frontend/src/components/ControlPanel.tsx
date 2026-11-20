@@ -269,8 +269,9 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
   const [help, setHelp] = useState(false)
   // Enter now ignores the trigger price, so it doesn't need the (trigger-based) validation to pass: only real
   // numbers; the server re-checks everything against the live price.
+  const nowCfg = { ...cfg, tp_sl_input: 'points', tp_points: null, sl_points: null, tp_price: null, sl_price: null, enter_now: true }
   const canEnterNow =
-    mode === 'SINGLE' && !running && !holding && !!tick && !!engine?.connected && !engine?.daily_loss_block && notNumbers(cfg).length === 0 && cfg.lot !== null
+    mode === 'SINGLE' && !running && !holding && !!tick && !!engine?.connected && !engine?.daily_loss_block && notNumbers(nowCfg).length === 0 && cfg.lot !== null
 
   /** Pick TP/SL on the chart: switches to exact prices (converting the other field from points if needed). The
    *  picked level also sets the direction: a TP above the price (or an SL below it) means BUY, otherwise SELL. */
@@ -290,23 +291,6 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
         return { ...base, direction, [field === 'tp' ? 'tpPrice' : 'slPrice']: price.toFixed(digits) }
       }),
     )
-
-  /** Exact TP/SL prices only fit one direction: say why the other Buy/Sell-now button is off. The server checks
-   *  against the live price on the trigger side (bid by default), so do the same here. */
-  const wrongSide = (d: Direction): string | null => {
-    const b = tick?.bid
-    if (!priceMode || b === undefined) return null
-    const s = d === 'BUY' ? 1 : -1
-    const tp = num(f.tpPrice)
-    const sl = num(f.slPrice)
-    if (tp !== null && s * (tp - b) <= 0) return `TP ${tp} must be ${d === 'BUY' ? 'above' : 'below'} the price for a ${d}`
-    if (sl !== null && s * (b - sl) <= 0) return `SL ${sl} must be ${d === 'BUY' ? 'below' : 'above'} the price for a ${d}`
-    return null
-  }
-  const pts = (x: string) => (x.trim() ? `${x.trim()} pts` : 'none')
-  const tpSlNow = priceMode
-    ? `TP ${f.tpPrice.trim() || 'none'} · SL ${f.slPrice.trim() || 'none'}`
-    : `TP ${pts(f.tp)} · SL ${pts(f.sl)}`
 
   // Draft levels for the chart while the bot is not running (faint lines; picking on the chart updates them).
   const ok = (n: number | null) => (n === null || Number.isNaN(n) ? null : n)
@@ -555,20 +539,20 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
             </button>
             {mode === 'SINGLE' && (
               <div className="space-y-1.5 pt-1">
-                <p className="num text-center text-[11px] text-faint">Now at market · {tpSlNow}</p>
-                {/* one click, like MT5/Exness: Sell at bid, Buy at ask, both with the TP/SL above */}
+                <p className="text-center text-[11px] text-faint">Now at market, no TP/SL · set them after on the chart</p>
+                {/* one click, like MT5/Exness: Sell at bid, Buy at ask. No TP/SL (client, 2026-11-20): the trader sets
+                    them on the open trade (chart drag or the boxes); the form's TP/SL are only for "Arm at trigger". */}
                 <div className="grid grid-cols-2 gap-2">
                   {(['SELL', 'BUY'] as Direction[]).map((d) => {
-                    const why = wrongSide(d)
                     return (
                       <button
                         key={d}
                         className={`btn flex-col gap-0 py-1.5 leading-tight font-semibold text-white ${
                           d === 'BUY' ? 'bg-up/80 hover:bg-up' : 'bg-down/80 hover:bg-down'
                         }`}
-                        disabled={!canEnterNow || busy || why !== null}
-                        onClick={() => act('arm', { ...cfg, direction: d, trigger_price: tick!.bid, enter_now: true })}
-                        title={why ?? `Open a ${d} now at market with ${tpSlNow} (the trigger price is not used)`}
+                        disabled={!canEnterNow || busy}
+                        onClick={() => act('arm', { ...nowCfg, direction: d, trigger_price: tick!.bid })}
+                        title={`Open a ${d} now at market, no TP/SL (the trigger price is not used)`}
                       >
                         <span className="text-xs">{d === 'BUY' ? 'Buy' : 'Sell'}</span>
                         <span className="num text-[15px]">{fmt(tick ? (d === 'BUY' ? tick.ask : tick.bid) : null, digits)}</span>
