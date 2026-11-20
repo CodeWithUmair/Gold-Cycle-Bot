@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../api'
-import { ControlPanel } from '../components/ControlPanel'
+import { ControlPanel, type Draft } from '../components/ControlPanel'
 import { Journal } from '../components/Journal'
 import { LogDrawer } from '../components/LogDrawer'
 import { PriceChart } from '../components/PriceChart'
@@ -35,6 +35,9 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [killOpen, setKillOpen] = useState<Mode | 'ALL' | null>(null)
   const [view, setView] = useState<'trading' | 'reports'>('trading')
+  // Pick TP/SL on the chart: which panel asked, and how to apply the clicked price to its form.
+  const [pick, setPick] = useState<{ mode: Mode; field: 'tp' | 'sl'; apply: (price: number) => void } | null>(null)
+  const [drafts, setDrafts] = useState<PerMode<Draft | null>>({ CYCLE: null, SINGLE: null })
   const tickRef = useRef<((t: Tick) => void) | null>(null)
 
   const toast = useCallback((l: LogEntry) => {
@@ -117,6 +120,19 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
     }
   }
 
+  /** Open Single trade: new TP/SL from a chart drag or the × in the panel. Returns false if refused. */
+  const modify = async (mode: Mode, tp: number | null, sl: number | null) => {
+    try {
+      const snap = await api.modify(mode, tp, sl)
+      setEngines((e) => ({ ...e, [snap.mode]: snap }))
+      return true
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onLoggedOut()
+      else toast({ ts: Date.now() / 1000, level: 'error', msg: (e as Error).message })
+      return false
+    }
+  }
+
   const closeAll = async (target: Mode | 'ALL') => {
     try {
       await api.closeAll(target === 'ALL' ? undefined : target) // state arrives over the websocket
@@ -166,7 +182,19 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.05 }}
           >
-            <PriceChart engine={engine} cycles={cycles} tickRef={tickRef} />
+            <PriceChart
+              engine={engine}
+              cycles={cycles}
+              tickRef={tickRef}
+              draft={drafts[tab]}
+              pick={pick && pick.mode === tab ? pick.field : null}
+              onPick={(price) => {
+                pick?.apply(price)
+                setPick(null)
+              }}
+              onCancelPick={() => setPick(null)}
+              onModify={tab === 'SINGLE' ? (tp, sl) => modify('SINGLE', tp, sl) : undefined}
+            />
           </motion.section>
           <motion.section className="h-64 shrink-0" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
             <Journal rows={cycles} mode={engine?.config?.mode} sessionPnl={engine?.session_pnl ?? 0} currency={currency} onOpenLog={() => setLogOpen(true)} />
@@ -207,6 +235,10 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
                 currency={currency}
                 onAction={(name, cfg) => onAction(m, name, cfg)}
                 onKill={() => setKillOpen(m)}
+                picking={pick?.mode === m ? pick.field : null}
+                onPick={(field, apply) => setPick((p) => (p?.mode === m && p.field === field ? null : { mode: m, field, apply }))}
+                onDraft={(d) => setDrafts((ds) => ({ ...ds, [m]: d }))}
+                onModify={m === 'SINGLE' ? (tp, sl) => modify(m, tp, sl) : undefined}
               />
             </div>
           ))}
@@ -228,7 +260,7 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
               const e = engines[m]
               return e?.position ? (
                 <span key={m} className="mt-2 block">
-                  {m === 'CYCLE' ? 'Cycle' : 'Single'} open: C{e.cycle_no} #{e.position.ticket} ({e.position.volume} lots)
+                  {m === 'CYCLE' ? `Cycle open: C${e.cycle_no}.${e.leg}` : 'Single trade open:'} #{e.position.ticket} ({e.position.volume} lots)
                 </span>
               ) : null
             })}

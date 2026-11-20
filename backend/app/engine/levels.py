@@ -88,8 +88,10 @@ def preview_ladder(cfg: CycleConfig, count: int = 5) -> list[PlannedCycle]:
     assumes order 2 hit its SL and restarts at the cycle entry (+ gap). Stops at stop_price / max_cycles."""
     lot = lot_for_cycle(cfg.lot, cfg.lot_multiplier, 1)
     if cfg.mode == Mode.SINGLE:
-        sl = None if cfg.sl_points is None else sl_price(cfg.trigger_price, cfg.direction, cfg.sl_points)
-        return [PlannedCycle(1, 1, cfg.trigger_price, tp_price(cfg.trigger_price, cfg.direction, cfg.tp_pts), sl, lot)]
+        e, d = cfg.trigger_price, cfg.direction
+        tp = None if cfg.tp_points is None else tp_price(e, d, cfg.tp_points)
+        sl = None if cfg.sl_points is None else sl_price(e, d, cfg.sl_points)
+        return [PlannedCycle(1, 1, e, tp, sl, lot)]
     out: list[PlannedCycle] = []
     entry, n = cfg.trigger_price, 1
     while len(out) < count and (cfg.max_cycles is None or n <= cfg.max_cycles):

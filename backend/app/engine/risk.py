@@ -57,16 +57,22 @@ def validate_config(cfg: CycleConfig, spec: SymbolSpec, tick: Tick | None) -> tu
     if min_dist_price > 0:
         min_pts = levels.price_to_points(min_dist_price)
         # CYCLE: order 2's SL sits tp_points away (at order 1's entry), so checking TP covers it.
-        for name, pts in (("TP", cfg.tp_pts), ("SL", cfg.sl_points)):
+        for name, pts in (("TP", cfg.tp_points), ("SL", cfg.sl_points)):
             if pts is not None and levels.points_to_price(pts) < min_dist_price:
                 errors.append(f"{name} {pts} pts is closer than the broker minimum of {min_pts:g} pts")
+
+    if cfg.tp_points is None and cfg.sl_points is None:
+        warnings.append(
+            "Single trade with no TP and no SL: it stays open until you close it "
+            "(Close all & stop, in MT5, or the daily loss limit)"
+        )
 
     if tick is not None:
         price = cfg.trigger_price
         cur = tick.bid
         if abs(price - cur) > 200:
             warnings.append(f"Trigger {price} is far from the current price {cur:.2f}")
-        if price == cur:
+        if price == cur and not cfg.enter_now:
             warnings.append(
                 f"Price is exactly at the trigger; the bot waits for price to move off and return to {price}."
             )
@@ -77,11 +83,12 @@ def validate_config(cfg: CycleConfig, spec: SymbolSpec, tick: Tick | None) -> tu
         # TP is measured from the planned entry, but the fill can be worse by spread + slippage
         # (seen live: planned 4044.13, fill 4044.59, TP 4044.73 -> only 0.14 pts of room).
         worst_cost = spread_points(tick) + cfg.max_slippage_points
-        if cfg.tp_pts <= 2 * worst_cost:
+        tp = cfg.tp_points
+        if tp is not None and tp <= 2 * worst_cost:
             warnings.append(
-                f"TP {cfg.tp_pts:g} pts is small vs spread {spread_points(tick):.2f} + max slippage "
+                f"TP {tp:g} pts is small vs spread {spread_points(tick):.2f} + max slippage "
                 f"{cfg.max_slippage_points:g}: a fill can land up to {worst_cost:.2f} pts worse, leaving "
-                f"as little as {max(cfg.tp_pts - worst_cost, 0):.2f} pts to TP"
+                f"as little as {max(tp - worst_cost, 0):.2f} pts to TP"
             )
         if cfg.stop_price is not None and levels.stop_reached(tick.bid, tick.ask, cfg):
             warnings.append("Price is already beyond the stop price")

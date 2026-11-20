@@ -2,7 +2,7 @@ from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.context import AppContext, client_ip, get_ctx
 from app.engine import levels, risk
@@ -116,6 +116,29 @@ async def close_all(
     for m in [mode] if mode else list(Mode):
         snap = await _simple("close_all", m, request, ctx, s)
     return snap
+
+
+class LevelsIn(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    tp: float | None = Field(default=None, gt=0)  # None = no TP
+    sl: float | None = Field(default=None, gt=0)  # None = no SL
+
+
+@router.post("/modify")
+async def modify(
+    mode: Mode,
+    body: LevelsIn,
+    request: Request,
+    ctx: AppContext = Depends(get_ctx),
+    s: Session = Depends(csrf_session),
+) -> dict[str, Any]:
+    """Set/move/remove the open Single trade's TP/SL (chart drag)."""
+    await _action(ctx, request, s, "modify", {"mode": mode, **body.model_dump()})
+    try:
+        await ctx.engines[mode].modify_levels(body.tp, body.sl)
+    except EngineError as e:
+        raise HTTPException(409, str(e)) from e
+    return ctx.engines[mode].snapshot()
 
 
 @router.post("/resume")

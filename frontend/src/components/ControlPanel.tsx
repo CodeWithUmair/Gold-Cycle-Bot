@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { ACTIVE_STATES, type CycleConfig, type Direction, type EngineSnapshot, type Mode, type Tick, type Validation } from '../types'
-import { NumberTicker, fmt, fmtMoney, orderLabel, pnlColor } from './ui'
+import { Modal, NumberTicker, fmt, fmtMoney, orderLabel, pnlColor } from './ui'
 
 interface FormState {
   direction: Direction
@@ -78,6 +78,19 @@ function toConfig(mode: Mode, f: FormState): Record<string, unknown> {
   }
 }
 
+const LABELS: Record<string, string> = {
+  trigger_price: 'Trigger price', lot: 'Lot', tp_points: 'TP points', sl_points: 'SL points', tp_price: 'TP price',
+  sl_price: 'SL price', cycle_gap: 'Cycle gap', stop_price: 'Stop price', max_slippage_points: 'Max slippage',
+  max_spread_points: 'Max spread', max_cycles: 'Max cycles', daily_loss_limit: 'Daily loss limit',
+}
+
+/** Typo guard: num() gives NaN for text like "abc" or "1..5", and JSON turns NaN into null, which the server reads
+ *  as "blank". For an optional TP/SL that would silently mean "no TP/SL", so block it here instead. */
+const notNumbers = (cfg: Record<string, unknown>) =>
+  Object.entries(cfg)
+    .filter(([, x]) => typeof x === 'number' && Number.isNaN(x))
+    .map(([k]) => `${LABELS[k] ?? k} is not a number`)
+
 const s = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n))
 
 function fromConfig(c: CycleConfig): FormState {
@@ -122,9 +135,83 @@ interface Props {
   currency: string
   onAction: (name: 'arm' | 'stop' | 'stopAfterCycle' | 'resume', cfg?: unknown) => Promise<void>
   onKill: () => void
+  picking?: 'tp' | 'sl' | null // this panel is waiting for a chart click
+  onPick?: (field: 'tp' | 'sl', apply: (price: number) => void) => void
+  onDraft?: (d: Draft | null) => void
+  onModify?: (tp: number | null, sl: number | null) => Promise<boolean> // open Single trade: change TP/SL
 }
 
-export function ControlPanel({ mode, engine, tick, floating, currency, onAction, onKill }: Props) {
+/** Open Single trade: type exact TP/SL prices and Set (blank = none). The chart drag does the same. */
+function EditLevels({ tp, sl, digits, onModify }: { tp: number | null; sl: number | null; digits: number; onModify: NonNullable<Props['onModify']> }) {
+  const str = (n: number | null) => (n === null ? '' : n.toFixed(digits))
+  const [t, setT] = useState(str(tp))
+  const [s, setS] = useState(str(sl))
+  const [busy, setBusy] = useState(false)
+  useEffect(() => setT(str(tp)), [tp]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => setS(str(sl)), [sl]) // eslint-disable-line react-hooks/exhaustive-deps
+  const nt = num(t)
+  const ns = num(s)
+  const bad = Number.isNaN(nt) || Number.isNaN(ns) || (nt !== null && nt <= 0) || (ns !== null && ns <= 0)
+  const same = nt === tp && ns === sl
+  return (
+    <form
+      className="grid grid-cols-[1fr_1fr_auto] items-end gap-2"
+      onSubmit={async (e) => {
+        e.preventDefault()
+        setBusy(true)
+        await onModify(nt, ns)
+        setBusy(false)
+      }}
+    >
+      <div>
+        <label className="label text-up/80">TP price</label>
+        <input className="field py-1.5" inputMode="decimal" value={t} placeholder="none" onChange={(e) => setT(e.target.value)} />
+      </div>
+      <div>
+        <label className="label text-down/80">SL price</label>
+        <input className="field py-1.5" inputMode="decimal" value={s} placeholder="none" onChange={(e) => setS(e.target.value)} />
+      </div>
+      <button type="submit" className="btn bg-gold/90 py-1.5 text-black hover:bg-gold" disabled={busy || bad || same} title={bad ? 'Enter a price or leave blank for none' : 'Send the new TP/SL to the broker'}>
+        Set
+      </button>
+    </form>
+  )
+}
+
+function RemoveBtn({ what, onClick }: { what: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} title={`Remove the ${what}`} aria-label={`Remove the ${what}`} className="rounded px-0.5 text-faint hover:bg-down/15 hover:text-down">
+      ×
+    </button>
+  )
+}
+
+export interface Draft {
+  entry: number | null
+  tp: number | null
+  sl: number | null
+}
+
+function PickBtn({ on, what, onClick }: { on: boolean; what: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`Pick the ${what} price on the chart`}
+      aria-label={`Pick the ${what} price on the chart`}
+      aria-pressed={on}
+      className={`mb-1 flex items-center gap-1 rounded px-1 text-[11px] ${on ? 'bg-gold/20 text-gold' : 'text-faint hover:text-text'}`}
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+        <circle cx="12" cy="12" r="8" />
+        <path d="M12 2v4M12 18v4M2 12h4M18 12h4" strokeLinecap="round" />
+      </svg>
+      {on ? 'click chart…' : 'chart'}
+    </button>
+  )
+}
+
+export function ControlPanel({ mode, engine, tick, floating, currency, onAction, onKill, picking, onPick, onDraft, onModify }: Props) {
   const [f, setF] = useState<FormState>(() => loadSaved(mode))
   const [v, setV] = useState<Validation | null>(null)
   const [busy, setBusy] = useState(false)
@@ -137,7 +224,9 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
   // When a session is running (e.g. page reloaded), show its config in the form.
   useEffect(() => {
     if (running && engine?.config) {
-      setF(fromConfig(engine.config))
+      const c = engine.config
+      // Buy/Sell now planned from the live price: keep the trader's own trigger (and direction toggle) in the form
+      setF((p) => (c.enter_now ? { ...fromConfig(c), trigger: p.trigger, direction: p.direction } : fromConfig(c)))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine?.session_id, running])
@@ -152,8 +241,13 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
 
   const cfg = useMemo(() => toConfig(mode, f), [mode, f])
   useEffect(() => {
+    const bad = notNumbers(cfg)
+    if (bad.length) {
+      setV({ errors: bad, warnings: [], ladder: [] })
+      return
+    }
     if (cfg.trigger_price === null) {
-      setV({ errors: ['Enter the trigger price'], warnings: [], ladder: [] })
+      setV({ errors: [mode === 'SINGLE' ? 'Enter the trigger price to arm (or enter now at market)' : 'Enter the trigger price'], warnings: [], ladder: [] })
       return
     }
     const t = window.setTimeout(() => {
@@ -174,15 +268,95 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
     }
   }
 
-  const canArm = !running && !!v && v.errors.length === 0 && !!engine?.connected && !engine?.daily_loss_block
+  // Single: a trade still open (even one left by an old "Stop now") blocks a new one until it's closed
+  const holding = mode === 'SINGLE' && !!engine?.position
+  const canArm = !running && !holding && !!v && v.errors.length === 0 && !!engine?.connected && !engine?.daily_loss_block
   const first = v?.ladder[0]
   const priceMode = mode === 'SINGLE' && f.tpSlInput === 'price'
   const trig = num(f.trigger)
+  const [help, setHelp] = useState(false)
+  // Enter now ignores the trigger price, so it doesn't need the (trigger-based) validation to pass: only real
+  // numbers; the server re-checks everything against the live price.
+  const canEnterNow =
+    mode === 'SINGLE' && !running && !holding && !!tick && !!engine?.connected && !engine?.daily_loss_block && notNumbers(cfg).length === 0 && cfg.lot !== null
+
+  /** Pick TP/SL on the chart: switches to exact prices (converting the other field from points if needed). The
+   *  picked level also sets the direction: a TP above the price (or an SL below it) means BUY, otherwise SELL. */
+  const pickOnChart = (field: 'tp' | 'sl') =>
+    onPick?.(field, (price) =>
+      setF((p) => {
+        const t = num(p.trigger)
+        const ref = t !== null && !Number.isNaN(t) ? t : (tick?.bid ?? price)
+        const direction: Direction = (field === 'tp') === price > ref ? 'BUY' : 'SELL'
+        const sign = direction === 'BUY' ? 1 : -1
+        const toPrice = (pts: string, side: number) => {
+          const n = num(pts)
+          return n === null || Number.isNaN(n) ? '' : (ref + side * n).toFixed(digits)
+        }
+        const base =
+          p.tpSlInput === 'price' ? p : { ...p, tpSlInput: 'price' as const, tpPrice: toPrice(p.tp, sign), slPrice: toPrice(p.sl, -sign) }
+        return { ...base, direction, [field === 'tp' ? 'tpPrice' : 'slPrice']: price.toFixed(digits) }
+      }),
+    )
+
+  /** Exact TP/SL prices only fit one direction: say why the other Buy/Sell-now button is off. The server checks
+   *  against the live price on the trigger side (bid by default), so do the same here. */
+  const wrongSide = (d: Direction): string | null => {
+    const b = tick?.bid
+    if (!priceMode || b === undefined) return null
+    const s = d === 'BUY' ? 1 : -1
+    const tp = num(f.tpPrice)
+    const sl = num(f.slPrice)
+    if (tp !== null && s * (tp - b) <= 0) return `TP ${tp} must be ${d === 'BUY' ? 'above' : 'below'} the price for a ${d}`
+    if (sl !== null && s * (b - sl) <= 0) return `SL ${sl} must be ${d === 'BUY' ? 'below' : 'above'} the price for a ${d}`
+    return null
+  }
+  const pts = (x: string) => (x.trim() ? `${x.trim()} pts` : 'none')
+  const tpSlNow = priceMode
+    ? `TP ${f.tpPrice.trim() || 'none'} · SL ${f.slPrice.trim() || 'none'}`
+    : `TP ${pts(f.tp)} · SL ${pts(f.sl)}`
+
+  // Draft levels for the chart while the bot is not running (faint lines; picking on the chart updates them).
+  const ok = (n: number | null) => (n === null || Number.isNaN(n) ? null : n)
+  const draft: Draft | null = running
+    ? null
+    : first
+      ? { entry: first.entry, tp: first.tp, sl: first.sl }
+      : priceMode
+        ? { entry: ok(trig), tp: ok(num(f.tpPrice)), sl: ok(num(f.slPrice)) }
+        : null
+  const draftKey = JSON.stringify(draft)
+  useEffect(() => {
+    onDraft?.(draft)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey])
 
   return (
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-        <RunningCard engine={engine} floating={floating} currency={currency} digits={digits} mode={mode} />
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setHelp(true)}
+            className="flex items-center gap-1.5 rounded px-1.5 py-1 text-xs text-muted hover:bg-panel-2 hover:text-text"
+            aria-label={`How ${mode === 'CYCLE' ? 'a cycle session' : 'a single trade'} works`}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 16v-4M12 8h.01" strokeLinecap="round" />
+            </svg>
+            How it works
+          </button>
+        </div>
+        <Modal open={help} onClose={() => setHelp(false)}>
+          <HowItWorks mode={mode} />
+          <div className="mt-4 flex justify-end">
+            <button autoFocus className="btn bg-panel-2 hover:bg-line" onClick={() => setHelp(false)}>
+              Got it
+            </button>
+          </div>
+        </Modal>
+        <RunningCard engine={engine} floating={floating} currency={currency} digits={digits} mode={mode} onModify={onModify} />
 
         <fieldset disabled={running} className="space-y-3">
           {/* direction */}
@@ -252,29 +426,40 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
 
           <div className={`grid gap-3 ${mode === 'SINGLE' ? 'grid-cols-2' : 'grid-cols-1'}`}>
             <div>
-              <label className="label text-up/80">{priceMode ? 'TP price' : mode === 'CYCLE' ? 'TP points (order 1)' : 'TP points'}</label>
+              <div className="flex items-center justify-between">
+                <label className="label text-up/80">
+                  {priceMode ? 'TP price' : 'TP points'}
+                  {mode === 'CYCLE' ? ' (order 1)' : ' (optional)'}
+                </label>
+                {mode === 'SINGLE' && <PickBtn on={picking === 'tp'} what="TP" onClick={() => pickOnChart('tp')} />}
+              </div>
               <input
                 className="field"
                 inputMode="decimal"
                 value={priceMode ? f.tpPrice : f.tp}
                 onChange={(e) => set(priceMode ? 'tpPrice' : 'tp', e.target.value)}
+                placeholder={mode === 'SINGLE' ? 'none' : undefined}
               />
               <p className="num mt-1 text-xs text-faint">
-                {first ? (priceMode ? `= ${Math.abs((first.tp ?? first.entry) - first.entry).toFixed(2)} pts` : `@ ${fmt(first.tp, 2)}`) : ' '}
+                {!first ? ' ' : first.tp === null ? 'no TP' : priceMode ? `= ${Math.abs(first.tp - first.entry).toFixed(2)} pts` : `@ ${fmt(first.tp, 2)}`}
                 {mode === 'CYCLE' && first && ` · order 2 opens there with SL ${fmt(first.entry, 2)}, no TP`}
               </p>
             </div>
             {mode === 'SINGLE' && (
             <div>
-              <label className="label text-down/80">{priceMode ? 'SL price' : 'SL points'}</label>
+              <div className="flex items-center justify-between">
+                <label className="label text-down/80">{priceMode ? 'SL price' : 'SL points'} (optional)</label>
+                <PickBtn on={picking === 'sl'} what="SL" onClick={() => pickOnChart('sl')} />
+              </div>
               <input
                 className="field"
                 inputMode="decimal"
                 value={priceMode ? f.slPrice : f.sl}
                 onChange={(e) => set(priceMode ? 'slPrice' : 'sl', e.target.value)}
+                placeholder="none"
               />
               <p className="num mt-1 text-xs text-faint">
-                {first ? (priceMode ? `= ${fmt(first.sl === null ? null : Math.abs(first.entry - first.sl), 2)} pts` : `@ ${fmt(first.sl, 2)}`) : ' '}
+                {!first ? ' ' : first.sl === null ? 'no SL' : priceMode ? `= ${Math.abs(first.entry - first.sl).toFixed(2)} pts` : `@ ${fmt(first.sl, 2)}`}
               </p>
             </div>
             )}
@@ -367,31 +552,73 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
       <div className="space-y-2 border-t border-line p-4">
         {engine?.resumable && !running && (
           <button className="btn w-full bg-info/90 text-black hover:bg-info" disabled={busy} onClick={() => act('resume')}>
-            Resume session {engine.session_id} (C{engine.cycle_no})
+            Resume session {engine.session_id}
+            {mode === 'CYCLE' && ` (C${engine.cycle_no}.${engine.leg})`}
           </button>
         )}
-        {!running ? (
-          <button className="btn w-full bg-gold py-2.5 font-semibold text-black hover:bg-gold/90" disabled={!canArm || busy} onClick={() => act('arm', cfg)}>
-            Arm {mode === 'CYCLE' ? 'cycle' : 'single trade'}
-          </button>
+        {!running && !holding ? (
+          <>
+            <button className="btn w-full bg-gold py-2.5 font-semibold text-black hover:bg-gold/90" disabled={!canArm || busy} onClick={() => act('arm', cfg)}>
+              Arm {mode === 'CYCLE' ? 'cycle' : 'at trigger price'}
+            </button>
+            {mode === 'SINGLE' && (
+              <div className="space-y-1.5 pt-1">
+                <p className="num text-center text-[11px] text-faint">Now at market · {tpSlNow}</p>
+                {/* one click, like MT5/Exness: Sell at bid, Buy at ask, both with the TP/SL above */}
+                <div className="grid grid-cols-2 gap-2">
+                  {(['SELL', 'BUY'] as Direction[]).map((d) => {
+                    const why = wrongSide(d)
+                    return (
+                      <button
+                        key={d}
+                        className={`btn flex-col gap-0 py-1.5 leading-tight font-semibold text-white ${
+                          d === 'BUY' ? 'bg-up/80 hover:bg-up' : 'bg-down/80 hover:bg-down'
+                        }`}
+                        disabled={!canEnterNow || busy || why !== null}
+                        onClick={() => act('arm', { ...cfg, direction: d, trigger_price: tick!.bid, enter_now: true })}
+                        title={why ?? `Open a ${d} now at market with ${tpSlNow} (the trigger price is not used)`}
+                      >
+                        <span className="text-xs">{d === 'BUY' ? 'Buy' : 'Sell'}</span>
+                        <span className="num text-[15px]">{fmt(tick ? (d === 'BUY' ? tick.ask : tick.bid) : null, digits)}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </>
         ) : (
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              className="btn border border-line hover:bg-panel-2"
-              disabled={busy || engine?.stop_after_cycle}
-              onClick={() => act('stopAfterCycle')}
-              title="Let the current trade finish (TP/SL), then stop"
-            >
-              {engine?.stop_after_cycle ? 'Stopping after cycle…' : 'Stop after this cycle'}
-            </button>
-            <button
-              className="btn border border-line hover:bg-panel-2"
-              disabled={busy}
-              onClick={() => act('stop')}
-              title="Stop the bot now. An open trade stays open with its TP/SL on the broker server."
-            >
-              Stop now
-            </button>
+          <div className={`grid gap-2 ${mode === 'CYCLE' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            {mode === 'CYCLE' && (
+              <button
+                className="btn border border-line hover:bg-panel-2"
+                disabled={busy || engine?.stop_after_cycle}
+                onClick={() => act('stopAfterCycle')}
+                title="Let the current trade finish (TP/SL), then stop"
+              >
+                {engine?.stop_after_cycle ? 'Stopping after cycle…' : 'Stop after this cycle'}
+              </button>
+            )}
+            {mode === 'SINGLE' ? (
+              // Single: Stop closes the trade at market (client, 2026-11-20); before the fill it cancels the order
+              <button
+                className={`btn border py-2 font-semibold ${holding ? 'border-gold/60 text-gold hover:bg-gold/15' : 'border-line hover:bg-panel-2'}`}
+                disabled={busy || !!engine?.pending_close}
+                onClick={() => act('stop')}
+                title={holding ? 'Close this trade now at market' : 'Cancel: stop waiting for the trigger'}
+              >
+                {engine?.pending_close ? 'Closing…' : holding ? 'Close trade' : 'Cancel'}
+              </button>
+            ) : (
+              <button
+                className="btn border border-line hover:bg-panel-2"
+                disabled={busy}
+                onClick={() => act('stop')}
+                title="Stop the bot now. An open trade stays open with its TP/SL on the broker server."
+              >
+                Stop now
+              </button>
+            )}
           </div>
         )}
         <button className="btn w-full border border-down/50 text-down hover:bg-down/15" disabled={busy} onClick={onKill} title="Ctrl+Shift+K">
@@ -419,14 +646,14 @@ function HowItWorks({ mode }: { mode: Mode }) {
           ['It ends by itself', 'On stop price, max cycles or the daily loss limit. Or press Stop. Then edit the form and Arm again for a new session.'],
         ]
       : [
-          ['Set the trade', 'Direction, trigger price, lot and TP/SL (in points, or switch to exact prices).'],
+          ['Set the trade', 'Direction, trigger price, lot, and TP and/or SL (in points or exact prices). Both are optional.'],
           ['Arm', 'The bot waits for price to touch the trigger, opens one trade with TP/SL attached on the broker.'],
-          ['Done', 'When TP or SL hits, the bot goes back to IDLE. Edit and Arm again for the next trade.'],
+          ['Done', 'When TP or SL hits, the bot goes back to IDLE. With neither set, the trade stays open until you close it.'],
         ]
   return (
-    <div className="rounded-lg border border-dashed border-line p-3">
-      <p className="mb-2 text-xs font-medium tracking-wide text-muted uppercase">How a {mode === 'CYCLE' ? 'cycle session' : 'single trade'} works</p>
-      <ol className="space-y-1.5 text-xs">
+    <div>
+      <h3 className="mb-3 text-base font-semibold">How a {mode === 'CYCLE' ? 'cycle session' : 'single trade'} works</h3>
+      <ol className="space-y-2 text-sm">
         {steps.map(([t, d], i) => (
           <li key={t} className="flex gap-2">
             <span className="num flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-gold/15 text-[11px] text-gold">{i + 1}</span>
@@ -440,11 +667,13 @@ function HowItWorks({ mode }: { mode: Mode }) {
   )
 }
 
-function RunningCard({ engine, floating, currency, digits, mode }: { engine: EngineSnapshot | null; floating: number | null; currency: string; digits: number; mode: Mode }) {
-  if (!engine || !engine.config || !engine.session_id) return <HowItWorks mode={mode} />
+function RunningCard({ engine, floating, currency, digits, mode, onModify }: { engine: EngineSnapshot | null; floating: number | null; currency: string; digits: number; mode: Mode; onModify?: Props['onModify'] }) {
+  if (!engine || !engine.config || !engine.session_id) return null // "How it works" is behind the info button
   const p = engine.position
-  const ended = !ACTIVE_STATES.includes(engine.state)
+  // Single: a trade left open by "Stop now" still shows here (its TP/SL can be changed); otherwise no card
+  const ended = !ACTIVE_STATES.includes(engine.state) && !(mode === 'SINGLE' && p)
   if (ended) {
+    if (mode === 'SINGLE') return null // client: no "Last session" card in Single (history is in the journal/Reports)
     return (
       <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="space-y-2 rounded-lg border border-line bg-panel-2/60 p-3 text-sm">
         <div className="flex items-center justify-between">
@@ -454,7 +683,7 @@ function RunningCard({ engine, floating, currency, digits, mode }: { engine: Eng
           <span className={`num text-xs ${pnlColor(engine.session_pnl)}`}>{fmtMoney(engine.session_pnl, currency)}</span>
         </div>
         <p className="text-xs text-muted">
-          Ended after C{engine.cycle_no}
+          {mode === 'CYCLE' ? `Ended after C${engine.cycle_no}.${engine.leg}` : 'Trade ended'}
           {engine.stop_reason ? ` — ${engine.stop_reason.replaceAll('_', ' ').toLowerCase()}` : ''}.
           {engine.resumable && <span className="text-info"> It was interrupted by a restart: you can Resume it below.</span>}
         </p>
@@ -486,9 +715,26 @@ function RunningCard({ engine, floating, currency, digits, mode }: { engine: Eng
       {p && (
         <div className="num grid grid-cols-3 gap-2 text-xs">
           <Kv k="Fill" v={fmt(p.fill_price, digits)} />
-          <Kv k="TP / SL" v={`${fmt(p.tp || null, 2)} / ${fmt(p.sl || null, 2)}`} />
+          <Kv
+            k="TP / SL"
+            v={
+              <span className="inline-flex items-center gap-1">
+                <span className="text-up/90">{fmt(engine.tp, 2)}</span>
+                {onModify && engine.tp !== null && <RemoveBtn what="TP" onClick={() => onModify(null, engine.sl)} />}
+                <span className="text-faint">/</span>
+                <span className="text-down/90">{fmt(engine.sl, 2)}</span>
+                {onModify && engine.sl !== null && <RemoveBtn what="SL" onClick={() => onModify(engine.tp, null)} />}
+              </span>
+            }
+          />
           <Kv k="Floating" v={<span className={pnlColor(floating)}>{fmtMoney(floating, '')}</span>} />
         </div>
+      )}
+      {p && onModify && mode === 'SINGLE' && !engine.pending_close && (
+        <>
+          <EditLevels tp={engine.tp} sl={engine.sl} digits={digits} onModify={onModify} />
+          <p className="text-[11px] text-faint">Or drag the TP/SL lines on the chart (drag the entry line to add one).</p>
+        </>
       )}
     </motion.div>
   )

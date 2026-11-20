@@ -1,5 +1,6 @@
 import { AnimatePresence, animate, motion, useReducedMotion } from 'framer-motion'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { BotState, LogEntry } from '../types'
 
 export const fmt = (n: number | null | undefined, d = 2) =>
@@ -8,29 +9,38 @@ export const fmt = (n: number | null | undefined, d = 2) =>
 export const fmtMoney = (n: number | null | undefined, cur = '') =>
   n === null || n === undefined ? '—' : `${n >= 0 ? '+' : '−'}${Math.abs(n).toFixed(2)}${cur ? ` ${cur}` : ''}`
 
-/** Journal label: C3.1 / C3.2 for a cycle's order 1 / order 2, C1 for a single trade. */
+/** Journal label: C3.1 / C3.2 for a cycle's order 1 / order 2, "Trade" for a single trade (no cycle terms there). */
 export const orderLabel = (r: { cycle_no: number; leg: number }, mode: string | null | undefined) =>
-  mode === 'CYCLE' ? `C${r.cycle_no}.${r.leg}` : `C${r.cycle_no}`
+  mode === 'CYCLE' ? `C${r.cycle_no}.${r.leg}` : 'Trade'
 
 export const pnlColor = (n: number | null | undefined) =>
   n === null || n === undefined || n === 0 ? 'text-muted' : n > 0 ? 'text-up' : 'text-down'
 
 /** Animated number (P/L, balance). Jumps straight to the value when the user prefers reduced motion. */
-export function NumberTicker({ value, format }: { value: number; format: (n: number) => string }) {
+/** Animated number. `flash`: tint green when it rises, red when it falls (like the MT5 terminal), then fade back. */
+export function NumberTicker({ value, format, flash }: { value: number; format: (n: number) => string; flash?: boolean }) {
   const reduce = useReducedMotion()
   const [shown, setShown] = useState(value)
+  const [dir, setDir] = useState(0)
   const prev = useRef(value)
   useEffect(() => {
+    const from = prev.current
+    prev.current = value
+    if (flash && value !== from) setDir(value > from ? 1 : -1)
     if (reduce) {
       setShown(value)
-      prev.current = value
       return
     }
-    const c = animate(prev.current, value, { duration: 0.45, ease: 'easeOut', onUpdate: setShown })
-    prev.current = value
+    const c = animate(from, value, { duration: 0.45, ease: 'easeOut', onUpdate: setShown })
     return () => c.stop()
-  }, [value, reduce])
-  return <span className="num">{format(shown)}</span>
+  }, [value, reduce, flash])
+  useEffect(() => {
+    if (!dir) return
+    const t = window.setTimeout(() => setDir(0), 800)
+    return () => window.clearTimeout(t)
+  }, [value, dir])
+  const tint = dir > 0 ? 'text-up' : dir < 0 ? 'text-down' : ''
+  return <span className={`num transition-colors duration-300 ${tint}`}>{format(shown)}</span>
 }
 
 const STATE_STYLE: Record<BotState, { label: string; cls: string; dot: string; pulse: boolean }> = {
@@ -112,7 +122,8 @@ export function Modal({ open, onClose, children }: { open: boolean; onClose: () 
     window.addEventListener('keydown', k)
     return () => window.removeEventListener('keydown', k)
   }, [open, onClose])
-  return (
+  // Portal: a transformed ancestor (animated panels) would otherwise trap position:fixed inside it.
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
@@ -133,7 +144,8 @@ export function Modal({ open, onClose, children }: { open: boolean; onClose: () 
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }
 

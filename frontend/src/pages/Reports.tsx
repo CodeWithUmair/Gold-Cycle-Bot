@@ -269,12 +269,12 @@ function Reasons({ rows, currency }: { rows: Report['reasons']; currency: string
 }
 
 function CycleTable({ rows, mode }: { rows: CycleRow[]; mode: string }) {
-  if (rows.length === 0) return <p className="p-4 text-xs text-faint">Loading / no cycles.</p>
+  if (rows.length === 0) return <p className="p-4 text-xs text-faint">Loading / no {mode === 'CYCLE' ? 'cycles' : 'trades'}.</p>
   return (
     <table className="num w-full text-xs">
       <thead className="text-faint">
         <tr className="[&>th]:px-3 [&>th]:py-1.5 [&>th]:text-right [&>th]:font-normal">
-          <th className="!text-left">Cycle</th>
+          <th className="!text-left">{mode === 'CYCLE' ? 'Cycle' : 'Order'}</th>
           <th>Planned</th>
           <th>Fill</th>
           <th>Slip</th>

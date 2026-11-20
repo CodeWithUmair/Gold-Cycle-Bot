@@ -305,6 +305,77 @@ Client rules 2026-11-18 recorded in CLAUDE.md §4.5 and §12 (no separate ADR).
 
 ---
 
+## Session 4 — 2026-11-19 → 2026-11-20 — VPS updated, optional TP/SL in Single
+
+### State before
+Session 3 pushed (`7b3aee2`, `986766a`). VPS still on `b18dd4e`.
+
+### What was done
+| Item | Result | Files |
+|---|---|---|
+| **VPS updated** to `986766a` (`git pull` → `install.bat` → `start.bat`) | ✅ MT5 connected 474462104, dashboard up. Hang was QuickEdit again (Session 2 Finding #4): title "Select …" pauses the console and the server blocks on its next log write, so the site keeps loading. Esc fixes it; turn QuickEdit off | — |
+| **Single: TP and SL optional** (client): both / TP only / SL only / none, points or exact prices. Exact prices are checked per field (BUY TP above / SL below the trigger, SELL the reverse). Neither set → warning "stays open until you close it". CYCLE still requires TP | ✅ `tests/test_single_optional_tp_sl.py` (config combos, each engine case, kill switch, manual close, daily loss, restart reattach) + API test | `engine/models.py`, `levels.py`, `risk.py`, `cycle_engine.py`, `ControlPanel.tsx` |
+| Edge-case hardening found on the way | ✅ tested | see Findings |
+| **No cycle terms in Single** (client): "Stop after this cycle" only in the Cycle tab; Single journal/logs say "Trade" (not C1), "Trade journal", "Trade ended" | ✅ build | `ControlPanel.tsx`, `Journal.tsx`, `Dashboard.tsx`, `Reports.tsx`, `ui.tsx`, `cycle_engine.py` (`_c`) |
+| **Live account balance** (client, "like Exness"): DRY_RUN top bar now shows the connected MT5 account's balance/equity (+ paper P/L on top) instead of the simulator's 10,000. Polled every 0.3 s (was 1 s); balance/equity flash green/red on change; new "Floating P/L" stat | ✅ `tests/test_dry_run_account.py` | `sim_broker.py`, `cycle_engine.py`, `TopBar.tsx`, `ui.tsx` |
+| **"How it works" → ⓘ button + popup** (client) instead of the always-visible box. `Modal` now portals to `body` (a transformed ancestor traps `fixed`) | ✅ build | `ControlPanel.tsx`, `ui.tsx` |
+| **Single "Buy/Sell now at market"** (client): two one-click buttons side by side, Sell (bid) and Buy (ask), like Exness, both with the form's TP/SL (shown above them). With exact prices the button whose direction doesn't fit is disabled with the reason as tooltip; picking a TP/SL on the chart also sets the direction. `CycleConfig.enter_now` (SINGLE only). On arm the engine replaces `trigger_price` with the live price (trigger side), re-validates exact TP/SL against it, goes straight to OPENING and opens on the same tick. Spread/hours limits still apply (waits in OPENING); if price then drifts past max slippage it falls back to "wait for price to return" like any trigger. §4.6's "no enter now" still holds for CYCLE | ✅ `tests/test_enter_now.py` (5) + live paper: SELL opened at once at 3585.01, TP/SL from that price | `models.py`, `risk.py`, `cycle_engine.py`, `ControlPanel.tsx` |
+| **Pick TP/SL on the chart** (client, Single): "chart" button by TP/SL → click the chart → price goes into the field (switches to exact prices, converts the other field from points). Esc cancels. The form's trigger/TP/SL show as faint dashed lines before arming (both tabs) | ✅ build | `PriceChart.tsx`, `ControlPanel.tsx`, `Dashboard.tsx` |
+| **Drag TP/SL of the open trade on the chart** (client, "like Exness", Single only): drag the TP/SL line to move it; drag the entry line toward profit = add TP, toward loss = add SL; × in the panel removes one. `POST /api/bot/modify?mode=SINGLE {tp, sl}` → `CycleEngine.modify_levels` checks side vs the closing price (+ stops/freeze level), `modify_position` on the broker, updates `cur_tp/cur_sl` + the journal row. Refused → toast, lines snap back. Also works for a trade left open by Stop now. Snapshot no longer re-derives TP/SL from the plan while a position is open (a removed TP came back) | ✅ engine + API tests | `cycle_engine.py`, `api/bot.py`, `PriceChart.tsx`, `ControlPanel.tsx`, `Dashboard.tsx`, `api.ts` |
+| **Single "Last session" card removed** (client); the card still shows while a Single trade is open (incl. left open by Stop now) | ✅ build | `ControlPanel.tsx` |
+| 🔴→fixed **Journal row stuck open after Stop now** (live, client screenshot): Buy now → Stop now → Close all left P/L "—" and the duration ticking. Root cause: a STOPPED engine stopped watching the position it left open, so any later close (broker TP/SL, Close all, MT5) was never recorded. Now `step()` watches it (`_watch_left_open`, journal only, never trades; skipped while "Resume?" is pending). Close all on it is journaled as KILL_SWITCH | ✅ 2 tests (fail on old code) | `cycle_engine.py` |
+| Buy/Sell now no longer overwrites the form's trigger field with the entry price (caused "Price is exactly at the trigger") | ✅ build | `ControlPanel.tsx`, `types.ts` |
+
+| 🔴→fixed **Single Stop left the trade open** (client): in SINGLE, Stop is now **Close trade** (at market, `CloseReason.CLOSED`, retried every tick if the broker refuses, then IDLE) and **Cancel** before the fill. Also closes a trade left open by the old Stop. Buy/Sell/Arm are hidden while a Single trade is open (no more "A bot position is still open" toasts). CYCLE's Stop now is unchanged (trade stays with its server-side TP/SL) | ✅ 3 tests | `cycle_engine.py`, `models.py`, `ControlPanel.tsx`, `Journal.tsx` |
+| **Set TP/SL after Buy/Sell by typing** (client): TP/SL price boxes + Set in the open-trade card (blank = none), same `/modify` as the chart drag | ✅ build | `ControlPanel.tsx` |
+
+Quality gates: **99/99 pytest**, mypy clean, ruff clean, frontend build clean.
+
+### Findings
+#### Finding #1 — 🔴→fixed: typo in an optional field silently became "none"
+`num("abc")` is NaN and `JSON.stringify(NaN)` is `null`, so a typo in TP/SL would arm a trade **without** that TP/SL.
+The form now lists every non-numeric field as an error and blocks Arm.
+
+#### Finding #2 — 🔴→fixed: Infinity / NaN reached the config
+Python's JSON parser accepts `Infinity`/`NaN`, and `Field(gt=0)` lets `inf` through. `CycleConfig` now has
+`allow_inf_nan=False`. Also rejected: a TP/SL whose price would be ≤ 0 (huge SELL TP or BUY SL).
+
+#### Finding #3 — 🟡→fixed: `level_anchor=fill` sent a no-change modify
+With no TP/SL, or for CYCLE order 2 (SL fixed at order 1's entry), the bot still called `modify_position` with
+the same values. Real MT5 answers 10025 (no changes) → a false "could not move TP/SL" error toast. Now skipped when
+nothing changes (tests count the modify calls; the simulator would have accepted it).
+
+#### Live / demo results
+Paper run (DRY_RUN fills) on **live** XAUUSDm prices, SINGLE BUY 0.01:
+
+| Case | Position TP / SL | Result |
+|---|---|---|
+| TP 0.5, SL blank | 3583.39 / 0.0 | TP +0.33 → IDLE |
+| TP blank, SL 0.5 | 0.0 / 3582.86 | SL −0.51 → IDLE |
+| both blank | 0.0 / 0.0 | stayed open 20 s, closed by kill switch → STOPPED |
+
+#### Finding #4 — ⚪ Pre-existing, not changed: `level_anchor=fill` also moves exact-price TP/SL
+In price mode the trader typed exact levels, but "Levels from: fill" re-derives them from the fill. Default is
+`planned`, so it only matters if someone changes that. Ask before changing.
+
+### Files changed
+`backend/app/engine/{models,levels,risk,cycle_engine}.py`, `backend/tests/test_single_optional_tp_sl.py` (new),
+`backend/tests/{test_api,test_levels}.py`, `frontend/src/components/ControlPanel.tsx`, `CLAUDE.md`, `HANDOFF.md`.
+
+### ⚠️ NOT done yet — next session starts here
+1. Push, then update the VPS again (same steps; turn QuickEdit off first).
+2. Session 3 items still open (real-order demo run, `live_demo_test.py` rewrite).
+
+### Decisions made
+Client rule 2026-11-20 recorded in CLAUDE.md §3 / §12.
+
+### Open items (client)
+| # | Question | Current default |
+|---|---|---|
+| Q5 | Part Two TP/SL as points or exact prices? | both supported (toggle) |
+
+---
+
 ## Template for the next session
 
 ```markdown

@@ -105,3 +105,38 @@ def test_ws_rejects_anonymous(client: TestClient) -> None:
 
     with pytest.raises(WebSocketDisconnect), client.websocket_connect("ws://127.0.0.1/ws") as ws:
         ws.receive_json()
+
+
+def test_single_without_tp_sl_and_non_finite_input(client: TestClient) -> None:
+    h = {"X-CSRF-Token": login(client)}
+    single = {"mode": "SINGLE", "direction": "BUY", "trigger_price": 4100, "lot": 0.01}
+    v = client.post("/api/bot/validate", json=single).json()
+    assert v["errors"] == [] and any("no TP and no SL" in w for w in v["warnings"])
+    assert [(c["tp"], c["sl"]) for c in v["ladder"]] == [(None, None)]
+    r = client.post("/api/bot/arm", json=single, headers=h)
+    assert r.status_code == 200 and r.json()["state"] == "ARMED", r.text
+    assert "TP none, SL none" in client.get("/api/history/events").json()[0]["message"]
+
+    # Python's JSON parser accepts Infinity/NaN literals: they must be rejected, never armed
+    raw = '{"mode": "SINGLE", "direction": "BUY", "trigger_price": 4100, "lot": 0.01, "tp_points": Infinity}'
+    v = client.post("/api/bot/validate", content=raw, headers={"Content-Type": "application/json"}).json()
+    assert v["errors"] and v["ladder"] == []
+    raw = raw.replace("Infinity", "NaN")
+    r = client.post("/api/bot/arm", content=raw, headers={**h, "Content-Type": "application/json"})
+    assert r.status_code == 422
+
+
+def test_buy_now_then_drag_tp_sl(client: TestClient) -> None:
+    h = {"X-CSRF-Token": login(client)}
+    buy = {"mode": "SINGLE", "direction": "BUY", "trigger_price": 1, "lot": 0.01, "enter_now": True}
+    r = client.post("/api/bot/arm", json=buy, headers=h)
+    assert r.status_code == 200 and r.json()["state"] == "IN_POSITION", r.text
+    px = r.json()["planned_entry"]
+    r = client.post("/api/bot/modify?mode=SINGLE", json={"tp": px + 5, "sl": px - 5}, headers=h)
+    assert r.status_code == 200 and (r.json()["tp"], r.json()["sl"]) == (round(px + 5, 2), round(px - 5, 2)), r.text
+    r = client.post("/api/bot/modify?mode=SINGLE", json={"tp": None, "sl": px - 5}, headers=h)  # remove TP
+    assert r.status_code == 200 and r.json()["tp"] is None
+    assert client.post("/api/bot/modify?mode=SINGLE", json={"tp": px - 5}, headers=h).status_code == 409  # wrong side
+    assert client.post("/api/bot/modify?mode=CYCLE", json={"tp": px + 5}, headers=h).status_code == 409
+    assert client.post("/api/bot/modify?mode=SINGLE", json={"tp": 0}, headers=h).status_code == 422
+    assert client.post("/api/bot/modify?mode=SINGLE", json={"tp": px + 5}).status_code == 403  # CSRF

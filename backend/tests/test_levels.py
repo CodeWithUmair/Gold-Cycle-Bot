@@ -49,11 +49,10 @@ def test_reentry_after_sl() -> None:
     assert levels.reentry_after_sl(4000, Direction.SELL, 2) == 3998
 
 
-def test_sl_points_not_used_in_cycle_mode_but_required_in_single() -> None:
+def test_sl_points_not_used_in_cycle_mode() -> None:
+    # (SINGLE: TP and SL are optional, see test_single_optional_tp_sl.py)
     assert cfg(Direction.BUY, None, sl_points=5).sl_points is None
     assert rows(cfg(Direction.BUY, None, tp_points=5), 2) == [(1, 1, 4000, 4005, None), (1, 2, 4005, None, 4000)]
-    with pytest.raises(ValueError):
-        CycleConfig(mode=Mode.SINGLE, direction=Direction.BUY, trigger_price=4000, lot=0.01, tp_points=3)
 
 
 def test_ladder_stops_before_stop_price() -> None:

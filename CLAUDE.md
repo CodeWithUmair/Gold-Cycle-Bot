@@ -44,12 +44,12 @@ Two modes:
 | `direction` | `BUY` \| `SELL` | yes | |
 | `lot` | float | yes | Validate against `volume_min`, `volume_max`, `volume_step` |
 | `tp_points` | float > 0 | yes | Can differ from SL (3, 4, 5, 6 …) |
-| `sl_points` | float > 0 \| null | no | **Not used in CYCLE mode** (2026-11-18: order 1 has no SL, order 2's SL = order 1's entry). Required in SINGLE mode. |
+| `sl_points` | float > 0 \| null | no | **Not used in CYCLE mode** (2026-11-18: order 1 has no SL, order 2's SL = order 1's entry). Optional in SINGLE mode. |
 | `cycle_gap` | float ≥ 0 \| null | no | "Cycle Gape". **Only used after order 2's SL** — decides where the next cycle starts (see §4.4) |
 | `stop_price` | float \| null | no | "Stop bot cycle at position" — bot stops cycling here |
 
 ### SINGLE mode (Part Two)
-`trigger_price`, `direction`, `lot`, `tp_points`, `sl_points`. (TP/SL in points, same as cycle mode — **OPEN QUESTION Q5**: client may want exact prices; support both via a toggle `tp_sl_input: "points" | "price"`.)
+`trigger_price`, `direction`, `lot`, `tp_points`, `sl_points`. **CONFIRMED 2026-11-20: TP and SL are both optional** — both, TP only, SL only, or none (then the trade stays open until the trader closes it; the form warns). Applies to exact prices too: a given TP/SL price must be on the right side of the trigger. (TP/SL in points, same as cycle mode — **OPEN QUESTION Q5**: client may want exact prices; support both via a toggle `tp_sl_input: "points" | "price"`.)
 
 ---
 
@@ -126,7 +126,7 @@ The cycle is over and the next one starts from the cycle entry, same direction:
 
 - Record price at arm time. If trigger is above current price → fire when price rises to ≥ trigger. If below → fire when price falls to ≤ trigger.
 - BUY executes at ask, SELL at bid. Use **bid** for trigger detection by default (what the chart shows); config `trigger_price_side: "bid" | "ask" | "mid"`.
-- **CONFIRMED:** If price is already past the trigger when the bot is armed, **do not enter.** Let it go and wait until price comes back and touches the trigger level, then start. No "enter now" option. Show "Waiting for price to return to {trigger}" in the UI.
+- **CONFIRMED:** If price is already past the trigger when the bot is armed, **do not enter.** Let it go and wait until price comes back and touches the trigger level, then start. No "enter now" in CYCLE; SINGLE has a separate "Buy/Sell now at market" button (2026-11-20, `enter_now`). Show "Waiting for price to return to {trigger}" in the UI.
 - Add `max_slippage_points` (default 0.5). If the fill would slip beyond it, use MT5 `deviation`; if rejected, retry on the next tick while price is within tolerance, else log and wait for another touch.
 
 ### 4.7 Lot size
@@ -307,6 +307,9 @@ Confirmed:
 - Stop price reached → close the open trade immediately, then stop.
 - Price already past the trigger at arm time → don't enter; wait for price to come back to the trigger, then start.
 - (2026-11-18) Stop price is free: no "must be above/below the trigger" rule (§4.5).
+- (2026-11-20) Single: TP and SL are both optional (any combination, points or exact prices).
+- (2026-11-20) Single: "Buy/Sell now at market" (`enter_now`, levels from the live price) and TP/SL can be picked by clicking the chart.
+- (2026-11-20) Single: the open trade's TP/SL can be dragged on the chart (add / move / remove), like Exness. Not in CYCLE (its levels are the cycle rules).
 - (2026-11-18) Cycle and Single are separate bots and can run at the same time: two engines, Single uses `magic + 1`. "One trade at a time" (§2) is per bot.
 
 ---

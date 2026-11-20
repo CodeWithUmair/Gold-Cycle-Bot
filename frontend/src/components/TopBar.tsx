@@ -1,5 +1,5 @@
 import { MODES, type Account, type EngineSnapshot, type PerMode, type Tick } from '../types'
-import { Dot, NumberTicker, StateBadge, fmt } from './ui'
+import { Dot, NumberTicker, StateBadge, fmt, pnlColor } from './ui'
 
 interface Props {
   engine: EngineSnapshot | null
@@ -72,11 +72,23 @@ export function TopBar({ engine, engines, account, tick, wsConnected, broker, dr
         <Stat label="Spread" value={<span className="num">{spread === null ? '—' : spread.toFixed(2)}</span>} />
         <Stat
           label="Balance"
-          value={account ? <NumberTicker value={account.balance} format={(n) => `${money(n)} ${cur}`} /> : '—'}
+          value={account ? <NumberTicker value={account.balance} format={(n) => `${money(n)} ${cur}`} flash /> : '—'}
         />
         <Stat
           label="Equity"
-          value={account ? <NumberTicker value={account.equity} format={(n) => `${money(n)} ${cur}`} /> : '—'}
+          value={account ? <NumberTicker value={account.equity} format={(n) => `${money(n)} ${cur}`} flash /> : '—'}
+        />
+        <Stat
+          label="Floating P/L"
+          value={
+            account ? (
+              <span className={pnlColor(account.equity - account.balance)}>
+                <NumberTicker value={account.equity - account.balance} format={(n) => `${n >= 0 ? '+' : ''}${money(n)}`} />
+              </span>
+            ) : (
+              '—'
+            )
+          }
         />
       </div>
 

@@ -46,6 +46,7 @@ export interface CycleConfig {
   trigger_price_side: 'bid' | 'ask' | 'mid'
   max_slippage_points: number
   max_cycles: number | null
+  enter_now?: boolean // SINGLE "Buy/Sell now": planned from the live price
   daily_loss_limit: number | null
   max_spread_points: number | null
   trading_hours: string | null

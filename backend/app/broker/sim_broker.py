@@ -64,6 +64,7 @@ class SimBroker:
         self.ask = round(start_price + spread, 2)
         self.spread = spread
         self.balance = balance
+        self.start_balance = balance
         self.now = _time.time
         self.connected = True
         self.open_positions: dict[int, Position] = {}
@@ -176,9 +177,13 @@ class SimBroker:
         self._check()
         floating = sum(p.profit for p in self.open_positions.values())
         if self.feed is not None:
+            # DRY_RUN: the connected account's real balance/equity, plus the paper trades' P/L on top, so the
+            # numbers start where the trader's MT5 account is and move as the paper trades would.
             real = await self.feed.account()
+            paper = self.balance - self.start_balance
             return AccountInfo(
-                real.login, real.server, real.currency, self.balance, self.balance + floating, True, True
+                real.login, real.server, real.currency, real.balance + paper, real.equity + paper + floating,
+                real.is_demo, True,
             )
         return AccountInfo(0, "SIM", "USD", self.balance, self.balance + floating, True, True)
 

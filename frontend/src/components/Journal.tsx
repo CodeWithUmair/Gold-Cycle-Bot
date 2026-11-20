@@ -12,6 +12,7 @@ const dur = (s: number) => {
 const RESULT_CLS: Record<string, string> = {
   TP: 'bg-up/15 text-up',
   SL: 'bg-down/15 text-down',
+  CLOSED: 'bg-panel-2 text-muted', // Single: trader pressed Close trade
 }
 
 export function Journal({ rows, mode, sessionPnl, currency, onOpenLog }: { rows: CycleRow[]; mode: string | undefined; sessionPnl: number; currency: string; onOpenLog: () => void }) {
@@ -24,7 +25,7 @@ export function Journal({ rows, mode, sessionPnl, currency, onOpenLog }: { rows:
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-4 border-b border-line px-4 py-2">
-        <h2 className="text-sm font-medium">Cycle journal</h2>
+        <h2 className="text-sm font-medium">{mode === 'SINGLE' ? 'Trade journal' : 'Cycle journal'}</h2>
         <span className="text-xs text-muted">
           Session P/L{' '}
           <span className={`text-sm ${pnlColor(sessionPnl)}`}>
@@ -87,7 +88,7 @@ export function Journal({ rows, mode, sessionPnl, currency, onOpenLog }: { rows:
             </AnimatePresence>
           </tbody>
         </table>
-        {rows.length === 0 && <p className="p-6 text-center text-xs text-faint">No cycles yet. Arm the bot to start.</p>}
+        {rows.length === 0 && <p className="p-6 text-center text-xs text-faint">No {mode === 'SINGLE' ? 'trades' : 'cycles'} yet. Arm the bot to start.</p>}
       </div>
     </div>
   )
