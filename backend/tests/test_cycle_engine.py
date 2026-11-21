@@ -245,7 +245,9 @@ def test_stop_after_this_cycle() -> None:
         await h.arm()
         await h.px(4000)
         await h.engine.request_stop_after_cycle()
-        await h.px(4003)
+        await h.px(4003)  # client 2026-11-21: order 2 still opens on order 1's TP
+        assert h.engine.state == BotState.IN_POSITION and h.engine.leg == 2
+        await h.px(4000)  # order 2 SL -> cycle over -> stop
         assert h.engine.state == BotState.STOPPED and h.engine.stop_reason == "STOP_AFTER_CYCLE"
 
     run(scenario())

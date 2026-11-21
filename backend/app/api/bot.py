@@ -118,6 +118,25 @@ async def close_all(
     return snap
 
 
+@router.post("/update")
+async def update(
+    request: Request,
+    raw: dict[str, Any] = Body(...),
+    ctx: AppContext = Depends(get_ctx),
+    s: Session = Depends(csrf_session),
+) -> dict[str, Any]:
+    """Change the running cycle's settings without stopping it (client, 2026-11-21)."""
+    await _action(ctx, request, s, "update", raw)
+    cfg, errors = _parse(raw)
+    if cfg is None:
+        raise HTTPException(422, "; ".join(errors))
+    try:
+        await ctx.engines[cfg.mode].update_config(cfg)
+    except EngineError as e:
+        raise HTTPException(409, str(e)) from e
+    return ctx.engines[cfg.mode].snapshot()
+
+
 class LevelsIn(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
     tp: float | None = Field(default=None, gt=0)  # None = no TP
@@ -132,7 +151,7 @@ async def modify(
     ctx: AppContext = Depends(get_ctx),
     s: Session = Depends(csrf_session),
 ) -> dict[str, Any]:
-    """Set/move/remove the open Single trade's TP/SL (chart drag)."""
+    """Set/move/remove the open trade's TP/SL (boxes or chart drag), Single or Cycle."""
     await _action(ctx, request, s, "modify", {"mode": mode, **body.model_dump()})
     try:
         await ctx.engines[mode].modify_levels(body.tp, body.sl)

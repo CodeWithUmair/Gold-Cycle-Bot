@@ -133,15 +133,15 @@ interface Props {
   tick: Tick | null
   floating: number | null
   currency: string
-  onAction: (name: 'arm' | 'stop' | 'stopAfterCycle' | 'resume', cfg?: unknown) => Promise<void>
+  onAction: (name: 'arm' | 'update' | 'stop' | 'stopAfterCycle' | 'resume', cfg?: unknown) => Promise<void>
   onKill: () => void
   picking?: 'tp' | 'sl' | null // this panel is waiting for a chart click
   onPick?: (field: 'tp' | 'sl', apply: (price: number) => void) => void
   onDraft?: (d: Draft | null) => void
-  onModify?: (tp: number | null, sl: number | null) => Promise<boolean> // open Single trade: change TP/SL
+  onModify?: (tp: number | null, sl: number | null) => Promise<boolean> // open trade (Single or Cycle): change TP/SL
 }
 
-/** Open Single trade: type exact TP/SL prices and Set (blank = none). The chart drag does the same. */
+/** Open trade: type exact TP/SL prices and Set (blank = none). The chart drag does the same. */
 function EditLevels({ tp, sl, digits, onModify }: { tp: number | null; sl: number | null; digits: number; onModify: NonNullable<Props['onModify']> }) {
   const str = (n: number | null) => (n === null ? '' : n.toFixed(digits))
   const [t, setT] = useState(str(tp))
@@ -260,6 +260,18 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
     }
   }
 
+  // Running cycle (client, 2026-11-21): the form stays editable; "Apply changes" sends it to the running cycle.
+  // Direction is fixed; the trigger only while the bot waits for an order 1 (it re-arms there).
+  const live = running && mode === 'CYCLE'
+  const triggerLocked = live && !(engine?.state === 'ARMED' && engine.leg === 1)
+  const dirty = live && !!engine?.config && JSON.stringify(cfg) !== JSON.stringify(toConfig(mode, fromConfig(engine.config)))
+  const canApply = dirty && !!v && v.errors.length === 0 && !!engine?.connected && !engine?.pending_close
+  // An unapplied trigger edit would get stuck once order 1 opens (field locked, Apply refused): drop it then.
+  useEffect(() => {
+    if (triggerLocked && engine?.config) set('trigger', s(engine.config.trigger_price))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [triggerLocked])
+
   // Single: a trade still open (even one left by an old "Stop now") blocks a new one until it's closed
   const holding = mode === 'SINGLE' && !!engine?.position
   const canArm = !running && !holding && !!v && v.errors.length === 0 && !!engine?.connected && !engine?.daily_loss_block
@@ -334,7 +346,13 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
         </Modal>
         <RunningCard engine={engine} floating={floating} currency={currency} digits={digits} mode={mode} onModify={onModify} />
 
-        <fieldset disabled={running} className="space-y-3">
+        <fieldset disabled={running && !live} className="space-y-3">
+          {live && (
+            <p className="rounded bg-info/10 px-2 py-1.5 text-xs text-info">
+              Cycle running: change any field and press <b>Apply changes</b>. Direction is fixed; the trigger can change
+              only while the bot waits for order 1.
+            </p>
+          )}
           {/* direction */}
           <div className="grid grid-cols-2 gap-2">
             {(['BUY', 'SELL'] as Direction[]).map((d) => (
@@ -342,6 +360,8 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
                 key={d}
                 type="button"
                 onClick={() => set('direction', d)}
+                disabled={live}
+                title={live ? 'Direction can’t change on a running cycle: stop it and arm again' : undefined}
                 className={`btn border ${
                   f.direction === d
                     ? d === 'BUY'
@@ -358,11 +378,20 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
           <div>
             <label className="label">Market position (trigger price)</label>
             <div className="flex gap-2">
-              <input className="field" inputMode="decimal" value={f.trigger} onChange={(e) => set('trigger', e.target.value)} placeholder="e.g. 4000" />
+              <input
+                className="field"
+                inputMode="decimal"
+                value={f.trigger}
+                onChange={(e) => set('trigger', e.target.value)}
+                placeholder="e.g. 4000"
+                disabled={triggerLocked}
+                title={triggerLocked ? 'The trigger can change only while the bot waits for order 1' : undefined}
+              />
               <button
                 type="button"
                 className="btn shrink-0 border border-line px-2 text-xs text-muted hover:bg-panel-2 hover:text-text"
                 onClick={() => tick && set('trigger', tick.bid.toFixed(digits))}
+                disabled={triggerLocked}
                 title="Use current bid"
               >
                 Bid
@@ -564,13 +593,34 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
             )}
           </>
         ) : (
+          <>
+          {live && dirty && (
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <button
+                className="btn bg-gold py-2.5 font-semibold text-black hover:bg-gold/90"
+                disabled={!canApply || busy}
+                onClick={() => act('update', cfg)}
+                title="Send the changed settings to the running cycle (it keeps running)"
+              >
+                Apply changes
+              </button>
+              <button
+                className="btn border border-line px-3 hover:bg-panel-2"
+                disabled={busy}
+                onClick={() => engine?.config && setF(fromConfig(engine.config))}
+                title="Put the form back to the running cycle's settings"
+              >
+                Discard
+              </button>
+            </div>
+          )}
           <div className={`grid gap-2 ${mode === 'CYCLE' ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {mode === 'CYCLE' && (
               <button
                 className="btn border border-line hover:bg-panel-2"
                 disabled={busy || engine?.stop_after_cycle}
                 onClick={() => act('stopAfterCycle')}
-                title="Let the current trade finish (TP/SL), then stop"
+                title="Let this cycle finish (order 1, then order 2 opens on its TP as usual), then stop"
               >
                 {engine?.stop_after_cycle ? 'Stopping after cycle…' : 'Stop after this cycle'}
               </button>
@@ -596,14 +646,14 @@ export function ControlPanel({ mode, engine, tick, floating, currency, onAction,
               </button>
             )}
           </div>
+          </>
         )}
         <button className="btn w-full border border-down/50 text-down hover:bg-down/15" disabled={busy} onClick={onKill} title="Ctrl+Shift+K">
           Close all & stop
         </button>
-        {running && mode === 'CYCLE' && (
+        {live && (
           <p className="text-center text-xs leading-snug text-faint">
-            The {mode === 'CYCLE' ? 'Single' : 'Cycle'} tab is a separate bot and can run at the same time. To change this{' '}
-            {mode === 'CYCLE' ? 'cycle' : 'single trade'}, stop it first — the form unlocks at STOPPED or IDLE.
+            The Single tab is a separate bot and can run at the same time.
           </p>
         )}
       </div>
@@ -648,29 +698,9 @@ function RunningCard({ engine, floating, currency, digits, mode, onModify }: { e
   const p = engine.position
   // Single: a trade left open by "Stop now" still shows here (its TP/SL can be changed); otherwise no card
   const ended = !ACTIVE_STATES.includes(engine.state) && !(mode === 'SINGLE' && p)
-  // Single: TP/SL are edited in place (boxes below); the compact "TP / SL" column only for Cycle
-  const editable = !!p && !!onModify && mode === 'SINGLE' && !engine.pending_close
-  if (ended) {
-    if (mode === 'SINGLE') return null // client: no "Last session" card in Single (history is in the journal/Reports)
-    return (
-      <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} className="space-y-2 rounded-lg border border-line bg-panel-2/60 p-3 text-sm">
-        <div className="flex items-center justify-between">
-          <span className="text-muted">
-            Last session <span className="num text-text">{engine.session_id}</span> · {engine.config.mode} {engine.config.direction}
-          </span>
-          <span className={`num text-xs ${pnlColor(engine.session_pnl)}`}>{fmtMoney(engine.session_pnl, currency)}</span>
-        </div>
-        <p className="text-xs text-muted">
-          {mode === 'CYCLE' ? `Ended after C${engine.cycle_no}.${engine.leg}` : 'Trade ended'}
-          {engine.stop_reason ? ` — ${engine.stop_reason.replaceAll('_', ' ').toLowerCase()}` : ''}.
-          {engine.resumable && <span className="text-info"> It was interrupted by a restart: you can Resume it below.</span>}
-        </p>
-        <p className="rounded bg-gold/10 px-2 py-1.5 text-xs text-gold">
-          Start a new session: change the inputs below (or keep them) and press <b>Arm</b>. Full history is in <b>Reports</b>.
-        </p>
-      </motion.div>
-    )
-  }
+  // TP/SL of the open trade are edited in place (boxes below), Single and Cycle (2026-11-21)
+  const editable = !!p && !!onModify && !engine.pending_close
+  if (ended) return null // client: no "Last session" card in Single or Cycle (history is in the journal/Reports)
   return (
     <motion.div
       initial={{ opacity: 0, y: -6 }}

@@ -140,3 +140,15 @@ def test_buy_now_then_drag_tp_sl(client: TestClient) -> None:
     assert client.post("/api/bot/modify?mode=CYCLE", json={"tp": px + 5}, headers=h).status_code == 409
     assert client.post("/api/bot/modify?mode=SINGLE", json={"tp": 0}, headers=h).status_code == 422
     assert client.post("/api/bot/modify?mode=SINGLE", json={"tp": px + 5}).status_code == 403  # CSRF
+
+
+def test_update_running_cycle(client: TestClient) -> None:
+    h = {"X-CSRF-Token": login(client)}
+    cyc = {"mode": "CYCLE", "direction": "BUY", "trigger_price": 9000, "lot": 0.01, "tp_points": 3}
+    assert client.post("/api/bot/update", json=cyc, headers=h).status_code == 409  # not running
+    assert client.post("/api/bot/arm", json=cyc, headers=h).status_code == 200
+    r = client.post("/api/bot/update", json={**cyc, "tp_points": 5, "cycle_gap": 2}, headers=h)
+    assert r.status_code == 200 and r.json()["config"]["tp_points"] == 5 and r.json()["tp"] == 9005, r.text
+    assert client.post("/api/bot/update", json={**cyc, "direction": "SELL"}, headers=h).status_code == 409
+    assert client.post("/api/bot/update", json={**cyc, "tp_points": -1}, headers=h).status_code == 422
+    assert client.post("/api/bot/update", json=cyc).status_code == 403  # CSRF

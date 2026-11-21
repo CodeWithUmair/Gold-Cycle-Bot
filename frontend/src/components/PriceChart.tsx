@@ -41,7 +41,7 @@ interface Props {
   pick?: 'tp' | 'sl' | null // waiting for a click that sets this level
   onPick?: (price: number) => void
   onCancelPick?: () => void
-  onModify?: (tp: number | null, sl: number | null) => Promise<boolean> // open Single trade: new TP/SL
+  onModify?: (tp: number | null, sl: number | null) => Promise<boolean> // open trade (Single or Cycle): new TP/SL
 }
 
 export function PriceChart({ engine, cycles, tickRef, draft, pick, onPick, onCancelPick, onModify }: Props) {
@@ -197,7 +197,7 @@ export function PriceChart({ engine, cycles, tickRef, draft, pick, onPick, onCan
 
   // Drag TP/SL of the open trade, like MT5/Exness: drag the TP or SL line to move it, or drag the entry line
   // toward profit to add a TP / toward loss to add an SL. The server checks the new level and sends it to the broker.
-  const canDrag = !!onModify && !!engine?.position && engine.config?.mode === 'SINGLE' && !engine.pending_close
+  const canDrag = !!onModify && !!engine?.position && !engine.pending_close // Single and Cycle (2026-11-21)
   const dragCtx = useRef({ canDrag, engine, onModify })
   dragCtx.current = { canDrag, engine, onModify }
   useEffect(() => {

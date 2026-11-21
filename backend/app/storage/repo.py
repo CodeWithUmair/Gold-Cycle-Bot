@@ -107,6 +107,9 @@ class Repo:
             (state, json.dumps(runtime), cycle_no, pnl, stop_reason, sid),
         )
 
+    def update_session_config(self, sid: str, config_json: str) -> None:
+        self._exec("UPDATE sessions SET config_json=? WHERE id=?", (config_json, sid))
+
     def end_session(self, sid: str) -> None:
         self._exec("UPDATE sessions SET ended_at=? WHERE id=? AND ended_at IS NULL", (time.time(), sid))
 

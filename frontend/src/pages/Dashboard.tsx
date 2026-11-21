@@ -110,9 +110,9 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
     return () => window.removeEventListener('keydown', k)
   }, [])
 
-  const onAction = async (mode: Mode, name: 'arm' | 'stop' | 'stopAfterCycle' | 'resume', cfg?: unknown) => {
+  const onAction = async (mode: Mode, name: 'arm' | 'update' | 'stop' | 'stopAfterCycle' | 'resume', cfg?: unknown) => {
     try {
-      const snap = name === 'arm' ? await api.arm(cfg) : await api[name](mode)
+      const snap = name === 'arm' || name === 'update' ? await api[name](cfg) : await api[name](mode)
       setEngines((e) => ({ ...e, [snap.mode]: snap }))
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return onLoggedOut()
@@ -120,7 +120,7 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
     }
   }
 
-  /** Open Single trade: new TP/SL from a chart drag or the × in the panel. Returns false if refused. */
+  /** Open trade (Single or Cycle): new TP/SL from a chart drag or the boxes in the panel. Returns false if refused. */
   const modify = async (mode: Mode, tp: number | null, sl: number | null) => {
     try {
       const snap = await api.modify(mode, tp, sl)
@@ -193,7 +193,7 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
                 setPick(null)
               }}
               onCancelPick={() => setPick(null)}
-              onModify={tab === 'SINGLE' ? (tp, sl) => modify('SINGLE', tp, sl) : undefined}
+              onModify={(tp, sl) => modify(tab, tp, sl)}
             />
           </motion.section>
           <motion.section className="h-64 shrink-0" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
@@ -238,7 +238,7 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
                 picking={pick?.mode === m ? pick.field : null}
                 onPick={(field, apply) => setPick((p) => (p?.mode === m && p.field === field ? null : { mode: m, field, apply }))}
                 onDraft={(d) => setDrafts((ds) => ({ ...ds, [m]: d }))}
-                onModify={m === 'SINGLE' ? (tp, sl) => modify(m, tp, sl) : undefined}
+                onModify={(tp, sl) => modify(m, tp, sl)}
               />
             </div>
           ))}

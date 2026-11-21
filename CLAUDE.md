@@ -103,7 +103,9 @@ Config `level_anchor: "planned" | "fill"` (default `"planned"`).
 ### 4.3 Order 2 (after order 1 hits TP)
 
 Order 2's planned entry = order 1's TP. Price is already there, so it opens immediately at market, with SL at
-order 1's entry and no TP. `cycle_gap` is a manual input set by the trader per session (any value, or blank); it is
+order 1's entry and no TP. **CONFIRMED 2026-11-21 (critical):** order 2 opens in the same engine step that sees
+order 1's TP, whatever the price did: no max-slippage "wait for a touch", no max-spread wait, no trading-hours wait
+(those only guard order 1). A broker rejection is retried every second until it fills (or a stop condition). `cycle_gap` is a manual input set by the trader per session (any value, or blank); it is
 only used after order 2's SL (§4.4).
 
 ### 4.4 When order 2 closes on SL
@@ -309,7 +311,13 @@ Confirmed:
 - (2026-11-18) Stop price is free: no "must be above/below the trigger" rule (§4.5).
 - (2026-11-20) Single: TP and SL are both optional (any combination, points or exact prices).
 - (2026-11-20) Single: "Buy/Sell now at market" (`enter_now`, opens with **no TP/SL**; the trader sets them on the open trade) and TP/SL can be picked by clicking the chart.
-- (2026-11-20) Single: the open trade's TP/SL can be dragged on the chart (add / move / remove), like Exness. Not in CYCLE (its levels are the cycle rules).
+- (2026-11-20) Single: the open trade's TP/SL can be dragged on the chart (add / move / remove), like Exness.
+- (2026-11-21) Cycle can be changed while it runs: the form stays editable and "Apply changes" updates the running
+  cycle (TP points move an open order 1's TP; gap moves a waiting re-entry; trigger only while waiting for order 1;
+  stop price / lot / limits from now on; direction fixed). The open Cycle order's TP/SL can also be set/dragged like
+  Single; order 2 opens at order 1's TP as it is on the trade, and the next cycle still restarts at the entry (+ gap).
+- (2026-11-21, critical) Order 2 opens at once on order 1's TP, ignoring max slippage / max spread / trading hours
+  (§4.3). "Stop after this cycle" pressed during order 1 still opens order 2 and stops when order 2 closes.
 - (2026-11-18) Cycle and Single are separate bots and can run at the same time: two engines, Single uses `magic + 1`. "One trade at a time" (§2) is per bot.
 
 ---

@@ -82,7 +82,9 @@ export const api = {
   /** no mode = both engines */
   closeAll: (mode?: Mode) => req<EngineSnapshot>('POST', `/api/bot/close-all${mode ? `?mode=${mode}` : ''}`),
   resume: (mode: Mode) => req<EngineSnapshot>('POST', `/api/bot/resume?mode=${mode}`),
-  /** open Single trade: set/move/remove TP and SL (null = none) */
+  /** running cycle: change its settings without stopping it */
+  update: (cfg: unknown) => req<EngineSnapshot>('POST', '/api/bot/update', cfg),
+  /** open trade (Single or Cycle): set/move/remove TP and SL (null = none) */
   modify: (mode: Mode, tp: number | null, sl: number | null) =>
     req<EngineSnapshot>('POST', `/api/bot/modify?mode=${mode}`, { tp, sl }),
 

@@ -120,16 +120,18 @@ def test_removing_planned_tp_is_not_shown_again() -> None:
     run(scenario())
 
 
-def test_modify_rejected_for_cycle_and_without_a_trade() -> None:
+def test_modify_rejected_without_a_trade_allowed_for_cycle() -> None:
     async def scenario() -> None:
         h = Harness(start=3990.0)
         with pytest.raises(EngineError):
             await h.engine.modify_levels(4000, None)
         await h.arm(cycle_gap=None, trigger_price=3990)
+        with pytest.raises(EngineError, match="No open trade"):
+            await h.engine.modify_levels(4000, None)  # armed, nothing open yet
         await h.px(3989, 3990)
         assert h.engine.state == BotState.IN_POSITION
-        with pytest.raises(EngineError, match="Single"):
-            await h.engine.modify_levels(4000, None)
+        await h.engine.modify_levels(4000, None)  # Cycle too since 2026-11-21 (client)
+        assert next(iter(h.sim.open_positions.values())).tp == 4000
 
     run(scenario())
 

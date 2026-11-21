@@ -233,6 +233,7 @@ Auth: **S** = valid session cookie required (401 otherwise). **S+C** = session +
 | GET | `/api/bot/status` | S | — | `{engine: snapshot, account, tick, broker, dry_run}` |
 | POST | `/api/bot/validate` | S | raw config dict | `{errors[], warnings[], ladder[5]}` — always 200; pydantic errors become `errors` |
 | POST | `/api/bot/arm` | S+C | raw config dict | snapshot; 422 invalid config, 409 `EngineError` |
+| POST | `/api/bot/update` | S+C | raw CYCLE config dict | snapshot; changes the running cycle's settings (`update_config`); 422 invalid, 409 not running / direction changed / trigger after order 1 / stop already passed / TP on the wrong side |
 | POST | `/api/bot/stop` | S+C | — | snapshot; 409 if not running |
 | POST | `/api/bot/stop-after-cycle` | S+C | — | snapshot; 409 |
 | POST | `/api/bot/close-all` | S+C | — | snapshot |

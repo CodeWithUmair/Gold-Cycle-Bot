@@ -377,6 +377,56 @@ Client rule 2026-11-20 recorded in CLAUDE.md §3 / §12.
 
 ---
 
+## Session 5 — 2026-11-21 — change a running cycle (and its open order's TP/SL)
+
+### State before
+Pulled `2789d85` (Session 4 pushed). 100/100 pytest. In Cycle the whole form was locked while running, and
+`modify_levels` refused Cycle ("TP/SL can only be changed on a Single trade").
+
+### What was done
+| Item | Result | Files |
+|---|---|---|
+| **Edit a running cycle** (client): the Cycle form stays editable while running; **Apply changes** / **Discard** appear when it differs from the running config. `POST /api/bot/update` → `CycleEngine.update_config`. TP points → an open order 1's TP moves on the broker (entry + new TP), else the next order 1. Gap → while waiting to re-enter after order 2's SL the waiting level moves (prev entry + new gap), else from the next SL. Trigger → only while ARMED for an order 1 (re-armed there). Stop price / lot / max cycles / limits → from the next tick/order. Direction is locked. Refused: stop price already passed (would stop now), TP on the wrong side of the price, lot/stops-level errors; a refused change leaves everything as it was. New config saved to `sessions.config_json` (restart uses it). One log/toast lists the changes ("TP pts 3 → 5 …") | ✅ `tests/test_cycle_live_edit.py` (8) + API test | `cycle_engine.py`, `repo.py` (`update_session_config`), `api/bot.py`, `ControlPanel.tsx`, `Dashboard.tsx`, `api.ts` |
+| **Open Cycle order's TP/SL**: same boxes + chart drag as Single (`/modify?mode=CYCLE`). Order 2 opens at order 1's TP as it is on the trade; the next cycle still restarts at the cycle entry (+ gap) whatever order 2's SL was moved to | ✅ test | `cycle_engine.py` (`modify_levels`, shared `_check_open_levels`), `PriceChart.tsx`, `ControlPanel.tsx` |
+| Single open-trade TP/SL editing (boxes + drag) checked: unchanged, all its tests pass | ✅ | — |
+| 🔴→fixed **Order 2 could be skipped or delayed** (client: "critical — order 2 must open at once when order 1 hits TP"). `_on_opening` ran order 1's gates on order 2 too: price > max slippage past the TP → back to ARMED "wait for a return to the TP" (in a fast market order 2 never opened); a broker rejection followed by a 1-pt move → same; spread > max spread → waited; trading-hours window closed → waited until the next day. Now order 2 skips all three gates and opens in the same step (levels still planned: entry = order 1's TP, SL = order 1's entry); a rejection is retried every second. Max spread / hours / slippage still guard order 1. Client chose "open anyway" for the spread case | ✅ `tests/test_order2_immediate.py` (13; 7 failed on the old code: jumps 0.8/3/25 BUY, 0.8/5 SELL, hours, reject + move) | `cycle_engine.py` (`_on_opening`), CLAUDE.md §4.3 |
+| Frontend review (agent): an unapplied trigger edit got stuck when order 1 opened (field locked, Apply always 409). Now the field resets to the running trigger when it locks | ✅ build | `ControlPanel.tsx` |
+| Edge-case test agents: live edits (21 tests: SELL paths, OPENING/RESOLVING/pending close, fill anchor, gap blank↔set, trigger at cycle > 1, stop vs re-entry, max cycles lowered, lot, daily loss, restart, order 2 TP/SL edits, no-op/rapid updates) | ✅ all pass, no bugs | `tests/test_edge_live_edit.py` |
+| Engine regression agent (35 tests: SELL tables, stop price both sides in each order, max cycles, kill switch in each state, manual close, restart in each state, daily loss, spread, rejects, Single) | ✅ all pass | `tests/test_edge_engine.py` |
+| **"Stop after this cycle" during order 1** (client choice): order 2 still opens at once on order 1's TP; the bot stops when order 2 closes (was: stopped after order 1, order 2 never opened). The kill switch while RESOLVING now uses `pending_close=KILL_SWITCH` (it used the stop-after-cycle flag, which would now open order 2) | ✅ tests | `cycle_engine.py`, ControlPanel tooltip |
+| 🟡→fixed journal label: one jump through order 1's TP **and** the stop price → broker closed on TP, journal said STOP_PRICE. Journal now shows the broker's TP/SL reason; the flow still stops (no order 2) | ✅ test | `cycle_engine.py` (`_record_close`) |
+| **"Last session" card removed from Cycle too** (client; Single lost it in Session 4). History stays in the journal / Reports; **Resume** button unchanged | ✅ build | `ControlPanel.tsx` |
+
+Quality gates: **179/179 pytest**, mypy clean, ruff clean, `npm run build` (tsc) clean. The live-edit UI was tried by
+the user locally on the simulator (market closed: Saturday). Not yet run on MT5 with real prices.
+
+Local test setup used: MT5 terminal 474902598 @ Exness-MT5Trial15, bot started with `$env:BROKER='sim';
+$env:SIM_START_PRICE='3540'` (env overrides `.env`, which still says `BROKER=mt5`). Local admin password changed by the
+user's request (hash in the local `.env` only; VPS unchanged).
+
+### Files changed
+`backend/app/engine/cycle_engine.py`, `backend/app/storage/repo.py`, `backend/app/api/bot.py`,
+`backend/tests/test_cycle_live_edit.py` (new), `backend/tests/{test_enter_now,test_api}.py`,
+`frontend/src/{api.ts,pages/Dashboard.tsx,components/ControlPanel.tsx,components/PriceChart.tsx}`, `CLAUDE.md` §12,
+`docs/ARCHITECTURE.md` (REST table), `HANDOFF.md`.
+
+### ⚠️ NOT done yet — next session starts here
+1. Update the VPS: **close any open bot trade first**, then in the bot's window Ctrl+C, and in PowerShell:
+   `cd C:\Users\Administrator\Desktop\Bot; git pull; cmd /c scripts\install.bat; cmd /c scripts\start.bat`, Ctrl+F5 in
+   Chrome, log in. When the market is open, watch one order 1 TP → order 2 on DRY_RUN (journal: C1.2 open_time = C1.1
+   close_time).
+2. Session 3/4 items still open (real-order demo run, `live_demo_test.py` rewrite).
+
+### Decisions made
+Client rule 2026-11-21 recorded in CLAUDE.md §12 (no ADR).
+
+### Open items (client)
+| # | Question | Current default |
+|---|---|---|
+| Q5 | Part Two TP/SL as points or exact prices? | both supported (toggle) |
+
+---
+
 ## Template for the next session
 
 ```markdown
