@@ -427,6 +427,71 @@ Client rule 2026-11-21 recorded in CLAUDE.md §12 (no ADR).
 
 ---
 
+## Session 6 — 2026-11-22 — one-command install, several accounts per VPS, "no trades in Exness"
+
+### State before
+Pulled: already at `167f326` (Session 5). Client asked: (1) a simple install for a non-developer (like dropping an EA
+into MT5), (2) several MT5 accounts on one VPS, (3) "the bot takes trades but Exness has no record of them".
+
+### What was done
+| Item | Result | Files |
+|---|---|---|
+| **"No record in Exness"**: root cause = the VPS runs `DRY_RUN=true` (Session 2 "VPS state"): real prices, **no orders sent**, paper fills. Since Session 4 the top bar shows the real balance + paper P/L, so it looked real; the only hint was a small "DRY RUN" badge. Fix: full-width yellow **PRACTICE MODE** bar ("no orders are sent to Exness … will not appear in MT5 or Exness history"), and practice ↔ real is one Manager menu item. To get real trades: Manager → 4, Algo Trading on, remove the other EA (Session 2 Finding #5) | ✅ build | `Dashboard.tsx` |
+| **Several accounts: one install + one profile per account** (user's choice): `GOLDCYCLE_ENV_FILE` points the app at `accounts\<name>\.env` (own `MT5_PATH`, login, port, magic, DB, logs). Unset = repo `.env` as before (old VPS install unchanged). Missing file → refuses to start (pydantic would silently fall back to the simulator) | ✅ `tests/test_accounts.py` | `config.py` |
+| 🔴→fixed **Session cookie shared between dashboards**: browsers don't separate cookies by port, so logging into 8002 logged out 8001. Cookie is now `gc_session_<port>` | ✅ test | `security.py`, `api/auth.py`, `main.py` |
+| Top bar shows the account number (server on hover) to tell the tabs apart | ✅ build | `TopBar.tsx` |
+| **`scripts/setup.ps1`**: one line in an admin PowerShell (`irm … \| iex`, README). Installs Python 3.12 / Git 2.51 / Node 22 from the official URLs if missing (no winget: absent on Windows Server 2019/2022), clones to `C:\GoldCycle\app` (or pulls), runs `goldcycle.ps1 install` | ⚠️ parses on PS 5.1; **not run end-to-end** (needs the repo public + a clean machine) | `scripts/setup.ps1` |
+| **`scripts/goldcycle.ps1` (GoldCycle Manager)**: menu + `install / add / list / start / stop / mode / update / open`. Add account: copies the Exness MT5 folder to `C:\GoldCycle\terminals\<name>`, asks login / password / server / practice-or-REAL / dashboard password, writes `.env` + `start.bat`, scheduled task `GoldCycle-<name>` (at logon, **no 3-day time limit**), desktop `.url`. Ports 8001+, magic `7700501 + (port-8000)*10`. `install` disables the old `GoldCycle` task so two bots never trade one account | ✅ tested locally (below) | `scripts/goldcycle.ps1` |
+| README: "One-command install, several MT5 accounts" | ✅ | `README.md` |
+
+Quality gates: **182/182 pytest**, mypy clean, ruff clean, `npm run build` clean.
+
+### Live / local results (this PC, DRY_RUN, demo 474902598 @ Exness-MT5Trial15)
+Two profiles in a scratch root, made by the Manager's own functions: acc1 → installed terminal, acc2 → a **copy** of it.
+| Check | Result |
+|---|---|
+| `.env` round-trip incl. passwords with `'` `$` `#` and non-ASCII dashboard password | ✅ exact |
+| Both bots up at once, own logs/DB, `MT5 connected: login=474902598` on each | ✅ |
+| Login on 8001 and 8002 side by side (cookies `gc_session_8001` / `_8002`) | ✅ |
+| Copied terminal logged into the account (user checked it) | ✅ connected, Algo Trading on, balance 496.10 |
+| Scheduled task: logon trigger, limit `PT0S`, start via task → `/health` OK, Manager Stop | ✅ (task + desktop file removed after) |
+| Stop leaves MT5 running | ✅ after fix (Finding #2) |
+
+### Findings
+#### Finding #1 — 🔴→fixed: PS 5.1 puts a BOM in front of text piped to python
+The dashboard hash was made from `"\ufeff" + password` → login always failed. The password now goes through a
+process-local env var (`GC_DASH_PW`), not a pipe and not the command line.
+#### Finding #2 — 🟡→fixed: `taskkill /T` also closed MT5
+`mt5.initialize(path=…)` starts the terminal as a **child of the bot**, so killing the bot's tree closed MT5. Stop now
+kills the tree except `terminal64.exe`.
+#### Finding #3 — 🟡 First start of a fresh terminal copy with no account: dashboard froze ~2 min
+`IPC send failed (-10001)`, then no logs and no HTTP answer. Not reproduced after that (the copy got logged in, every
+later start was fine; a thread test showed no GIL stall). Watch for it on the VPS when adding an account; if a new
+dashboard doesn't load, check that account's MT5 window (login dialog / wrong server).
+#### Finding #4 — ⚪ Old VPS task `GoldCycle` (made with `schtasks`) has the default 3-day limit
+Task Scheduler would stop that bot after 72 h. The Manager's `install` disables it; the new tasks have no limit.
+
+### ⚠️ NOT done yet — next session starts here
+1. Commit + push, then **make the GitHub repo public** (user's choice; the one-liner needs it). History has no secrets
+   (checked: no `.env`, passwords or tokens ever committed); HANDOFF has demo account numbers and VPS paths.
+2. Run the one-liner on the VPS (or a clean Windows VM) once: it is not tested end-to-end. On the VPS: close any bot
+   trade and the old bot window first; the installer disables the old `GoldCycle` task. The old folder
+   `Desktop\Bot` can stay as a backup.
+3. Add-account with a **real login/password** in a fresh copy is untested (here the terminal was logged in by hand).
+4. Tell the client: practice mode = no trades in Exness; switch to real in the Manager (Algo Trading on, other EA off).
+5. Session 3/4/5 items still open (real-order demo run, `live_demo_test.py` rewrite).
+
+### Decisions made
+One install + `accounts\<name>\` profiles (not one repo copy per account); installer copies the MT5 terminal per
+account; repo goes public for the one-liner. No ADR.
+
+### Open items (client)
+| # | Question | Current default |
+|---|---|---|
+| Q5 | Part Two TP/SL as points or exact prices? | both supported (toggle) |
+
+---
+
 ## Template for the next session
 
 ```markdown

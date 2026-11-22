@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.context import AppContext, client_ip, get_ctx
-from app.security import COOKIE_NAME, Session, current_session, verify_password
+from app.security import Session, cookie_name, current_session, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -34,7 +34,7 @@ async def login(
     ctx.limiter.reset(ip)
     token, s = ctx.sessions.create(body.username)
     response.set_cookie(
-        COOKIE_NAME,
+        cookie_name(request),
         token,
         httponly=True,
         samesite="strict",
@@ -48,8 +48,8 @@ async def login(
 
 @router.post("/logout")
 async def logout(request: Request, response: Response, ctx: AppContext = Depends(get_ctx)) -> dict[str, bool]:
-    ctx.sessions.delete(request.cookies.get(COOKIE_NAME))
-    response.delete_cookie(COOKIE_NAME, path="/")
+    ctx.sessions.delete(request.cookies.get(cookie_name(request)))
+    response.delete_cookie(cookie_name(request), path="/")
     return {"ok": True}
 
 

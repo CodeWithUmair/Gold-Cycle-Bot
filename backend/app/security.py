@@ -12,8 +12,17 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import HTTPException, Request
 
-COOKIE_NAME = "gc_session"
 CSRF_HEADER = "x-csrf-token"
+
+
+def cookie_name_for(port: int) -> str:
+    # Browsers share cookies across ports, so each account's dashboard (8001, 8002, …) needs its own
+    # cookie name, or logging into one logs the other tab out.
+    return f"gc_session_{port}"
+
+
+def cookie_name(request: Request) -> str:
+    return cookie_name_for(request.app.state.ctx.settings.port)
 
 _ph = PasswordHasher()
 
@@ -86,7 +95,7 @@ class LoginLimiter:
 
 def current_session(request: Request) -> Session:
     store: SessionStore = request.app.state.ctx.sessions
-    s = store.get(request.cookies.get(COOKIE_NAME))
+    s = store.get(request.cookies.get(cookie_name(request)))
     if s is None:
         raise HTTPException(401, "Not logged in")
     return s

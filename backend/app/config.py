@@ -1,5 +1,6 @@
 """Application settings, loaded from `.env` (repo root or backend/)."""
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -57,4 +58,12 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    # Several accounts on one VPS: each account's start script points GOLDCYCLE_ENV_FILE at its own
+    # accounts\<name>\.env (own MT5 terminal, port, database, logs). Unset = the repo's .env as before.
+    env_file = os.environ.get("GOLDCYCLE_ENV_FILE")
+    if not env_file:
+        return Settings()
+    if not Path(env_file).is_file():
+        # pydantic would silently skip a missing file and start on defaults (simulator) — refuse instead
+        raise SystemExit(f"GOLDCYCLE_ENV_FILE not found: {env_file}")
+    return Settings(_env_file=env_file)  # type: ignore[call-arg]

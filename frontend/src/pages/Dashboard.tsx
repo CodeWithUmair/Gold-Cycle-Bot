@@ -166,6 +166,12 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
         view={view}
         onView={setView}
       />
+      {dryRun && (
+        <div className="border-b border-gold/30 bg-gold/10 px-4 py-1.5 text-center text-xs font-medium text-gold">
+          PRACTICE MODE (dry run): no orders are sent to Exness. Trades here are on paper and will not appear in MT5 or
+          Exness history. Balance = your real balance + paper P/L.
+        </div>
+      )}
 
       {view === 'reports' && (
         <div className="min-h-0 flex-1">

@@ -35,6 +35,39 @@ cd backend
 
 ---
 
+## One-command install, several MT5 accounts (for the trader)
+
+1. Install **Exness MetaTrader 5** once (normal installer) and log in to any account.
+2. Right-click **PowerShell** → **Run as administrator**, paste this line and press Enter:
+
+   ```powershell
+   Set-ExecutionPolicy Bypass -Scope Process -Force; [Net.ServicePointManager]::SecurityProtocol='Tls12'; irm https://raw.githubusercontent.com/CodeWithUmair/Gold-Cycle-Bot/main/scripts/setup.ps1 | iex
+   ```
+
+   While the repo is **private** (the line above then fails), on a machine where git is already logged in to GitHub:
+
+   ```powershell
+   git clone https://github.com/CodeWithUmair/Gold-Cycle-Bot.git C:\GoldCycle\app
+   powershell -ExecutionPolicy Bypass -File C:\GoldCycle\app\scripts\goldcycle.ps1 install
+   ```
+
+   It installs Python / Git / Node if missing, downloads GoldCycle to `C:\GoldCycle\app`, builds it, and asks for
+   the first account: a short name, the MT5 number, password, server, practice or real orders, and a dashboard password.
+3. In the MT5 window that opens for that account, click **Algo Trading** once (green). Needed for real orders.
+
+Each account gets its own MT5 copy (`C:\GoldCycle\terminals\<name>`), settings, database and logs
+(`C:\GoldCycle\accounts\<name>`), and dashboard (`http://127.0.0.1:8001`, `8002`, …; desktop shortcut
+"GoldCycle <name>"). Bots start by themselves when Windows logs on.
+
+Everything else: the **GoldCycle Manager** desktop shortcut → add an account, start / stop all, **practice ↔ real
+orders**, open a dashboard, update. (`scripts\goldcycle.ps1 <command>` does the same from a terminal.)
+
+> **Practice mode** (`DRY_RUN=true`, the default for a new account) uses real prices but sends **no orders**: trades
+> show in the dashboard (yellow "PRACTICE MODE" bar) but **not** in MT5 or Exness history. Switch the account to real
+> orders in the Manager.
+
+The manual setup below still works for a single install (it reads the repo's `.env`).
+
 ## VPS setup (Windows)
 
 1. **Install** Python 3.11+ ("Add to PATH") and Node.js 20+.

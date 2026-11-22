@@ -60,6 +60,10 @@ export function TopBar({ engine, engines, account, tick, wsConnected, broker, dr
       </div>
 
       <div className="flex items-baseline gap-5 text-sm">
+        <Stat
+          label="Account"
+          value={account ? <span className="num" title={account.server}>#{account.login}</span> : '—'}
+        />
         <Stat label="Symbol" value={<span className="num">{engine?.symbol ?? '—'}</span>} />
         <Stat
           label="Bid / Ask"

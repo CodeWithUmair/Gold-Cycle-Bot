@@ -22,7 +22,7 @@ from app.context import AppContext
 from app.engine.cycle_engine import CycleEngine
 from app.engine.models import Mode
 from app.logging_setup import setup_logging
-from app.security import COOKIE_NAME, LoginLimiter, SessionStore
+from app.security import LoginLimiter, SessionStore, cookie_name_for
 from app.storage.repo import Repo
 from app.ws import Hub
 
@@ -157,7 +157,7 @@ def create_app() -> FastAPI:
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
         ctx: AppContext = websocket.app.state.ctx
-        if ctx.sessions.get(websocket.cookies.get(COOKIE_NAME)) is None:
+        if ctx.sessions.get(websocket.cookies.get(cookie_name_for(ctx.settings.port))) is None:
             await websocket.close(code=4401)
             return
         await websocket.accept()
