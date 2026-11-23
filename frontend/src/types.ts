@@ -68,6 +68,7 @@ export interface EngineSnapshot {
   session_id: string | null
   symbol: string
   connected: boolean
+  connect_error?: string | null
   config: CycleConfig | null
   cycle_no: number
   leg: number

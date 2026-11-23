@@ -173,6 +173,13 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
           {' '}Open trades keep their TP/SL on the broker.
         </div>
       )}
+      {engine && !engine.connected && ws.wsConnected && (
+        <div className="border-b border-down/40 bg-down/15 px-4 py-2 text-center text-xs font-medium text-down">
+          The bot is not connected to MetaTrader 5, so it cannot trade yet.
+          {' '}Open the bot&apos;s own MetaTrader 5 window and check it is logged in to your account (green connection bars at the bottom right).
+          {engine.connect_error ? <span className="mt-0.5 block font-normal opacity-80">Reason: {engine.connect_error}</span> : null}
+        </div>
+      )}
       {dryRun && (
         <div className="border-b border-gold/30 bg-gold/10 px-4 py-1.5 text-center text-xs font-medium text-gold">
           PRACTICE MODE (dry run): no orders are sent to Exness. Trades here are on paper and will not appear in MT5 or

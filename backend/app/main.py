@@ -83,10 +83,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     sessions = SessionStore(ttl_s=s.session_ttl_hours * 3600)
     sessions.attach(repo.get_setting("auth_sessions"), lambda v: repo.set_setting("auth_sessions", v))
     connected = True
+    connect_error: str | None = None
     try:
         await broker.connect()
     except Exception as e:
         connected = False
+        connect_error = str(e)
         log.error("Broker connect failed: %s — will keep retrying", e)
     symbol = await pick_symbol(s, repo, broker) if connected else (s.symbol or repo.get_setting("symbol") or "XAUUSD")
     # Single trades get magic+1 so each engine's "one position at a time" guard only sees its own trades.
@@ -96,6 +98,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     }
     for engine in engines.values():
         engine.connected = connected
+        engine.connect_error = connect_error
         if connected:
             try:
                 await engine.load_symbol()
@@ -148,6 +151,7 @@ def create_app() -> FastAPI:
             "ok": True,
             "broker": ctx.broker.name,
             "connected": ctx.engine.connected,
+            "error": None if ctx.engine.connected else ctx.engine.connect_error,
             "state": {m: e.state for m, e in ctx.engines.items()},
         }
 

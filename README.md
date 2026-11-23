@@ -55,12 +55,17 @@ cd backend
    ```
 
    It installs Python / Git / Node if missing, downloads GoldCycle to `C:\GoldCycle\app`, builds it, and asks for
-   the first account: a short name, the MT5 number, password, server, practice or real orders, and a dashboard password.
-3. In the MT5 window that opens for that account, click **Algo Trading** once (green). Needed for real orders.
+   the first account. Only what is needed, and every choice is a **number**:
+   real or demo account (1 / 2) → MT5 account number → server number (the number at the end of the server name, e.g.
+   `8` for `Exness-MT5Real8`; Enter if none) → MT5 password (hidden) → dashboard password (Enter = same as the MT5 password).
+   It then **logs the bot's MetaTrader in and tells you the result before saving anything**: wrong number, password or
+   server is explained in plain words and you can retry or retype. The dashboard opens only when it is connected.
+3. A second MetaTrader window opens: it is the bot's own MT5 (a clean copy, no charts and no other expert advisors).
+   Leave it open or minimize it. If it says so, click **Algo Trading** once (green): needed to send orders.
 
 Each account gets its own MT5 copy (`C:\GoldCycle\terminals\<name>`), settings, database and logs
 (`C:\GoldCycle\accounts\<name>`), and dashboard (`http://127.0.0.1:8001`, `8002`, …; desktop shortcut
-"GoldCycle <name>"). Bots start by themselves when Windows logs on.
+"GoldCycle <name>", where `<name>` is the account number). Bots start by themselves when Windows logs on.
 
 The bot runs **hidden**: there is no black window to click, freeze or close by mistake. If it crashes it starts
 again by itself within ~6 seconds, and an open dashboard page reconnects without refreshing or logging in again
@@ -69,14 +74,13 @@ What the bot prints goes to `C:\GoldCycle\accounts\<name>\logs\console.log`.
 
 Everything else: double-click the **GoldCycle Manager** desktop shortcut. It shows the accounts and asks what to do:
 **1** start the bot (MT5 opens by itself) · **2** stop the bot · **3** stop the bot **and** MT5 · **4** restart
-everything · **5** practice ↔ real orders · **6** add an account · **7** open the dashboard · **8** update.
+everything · **5** add an account · **6** open the dashboard · **7** update.
 No shortcut? Run `powershell -ExecutionPolicy Bypass -File C:\GoldCycle\app\scripts\goldcycle.ps1` (use the folder
 GoldCycle was installed in). `goldcycle.ps1 <command>` (`start`, `stop`, `stop-mt5`, `restart`, `update`, …) does the
 same from a terminal. Open trades stay on Exness with their TP/SL while the bot is stopped.
 
-> **Practice mode** (`DRY_RUN=true`, the default for a new account) uses real prices but sends **no orders**: trades
-> show in the dashboard (yellow "PRACTICE MODE" bar) but **not** in MT5 or Exness history. Switch the account to real
-> orders in the Manager.
+Accounts always send orders (a demo account trades demo money). A test-only practice mode that sends no orders still
+exists: `goldcycle.ps1 mode <account number>` (trades then show in the dashboard but **not** in MT5 / Exness history).
 
 The manual setup below still works for a single install (it reads the repo's `.env`).
 

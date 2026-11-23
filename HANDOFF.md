@@ -509,9 +509,21 @@ Session 2 Finding #4), the fix was Esc/right-click + restart + refresh + log in 
 | Console **QuickEdit turned off** in the bot's own console (only matters when run visibly, e.g. old `start.bat`) | ✅ unit-free (needs a real console) | `main.py` |
 | Manager: Start waits for `/health` and says "ready" or what to check; Add-account opens the dashboard; Stop also stops the task and kills parent before children | ✅ | `goldcycle.ps1` |
 
-Quality gates: **184/184 pytest**, mypy clean, ruff clean, `npm run build` clean.
+| **Add-account flow rewritten** (client: "don't ask stupid questions, give number choices"): no short name (the account number is the name), no practice/REAL question (accounts always send orders, `DRY_RUN=false`; practice kept only as CLI `mode`), account kind 1/2, server **number** (`Exness-MT5Real|Trial` + number, or a whole typed name), MT5 password (hidden), dashboard password (Enter = same as MT5 password, no repeat). Every choice is a number via `Read-Choice`; yes/no is `1) Yes 2) No` | ✅ simulated, see below | `goldcycle.ps1` |
+| **Connection test before saving** (`Test-Mt5Connection` → `backend/tools/check_mt5.py`): logs the bot's MT5 copy in with the typed details, prints the account / balance / demo-or-real, or the reason in plain words (`app/broker/mt5_errors.py`). Failure → 1 try again / 2 retype / 3 cancel (nothing saved). The dashboard opens in the browser only when `connected` | ✅ | `goldcycle.ps1`, `check_mt5.py`, `mt5_errors.py`, `tests/test_mt5_errors.py` |
+| **"MT5 not connected" now says why**: engine keeps `connect_error` (snapshot + `/health` `error`), red dashboard bar "The bot is not connected to MetaTrader 5 …  Reason: …", and Manager Start prints READY / NOT connected + reason | ✅ | `cycle_engine.py`, `main.py`, `types.ts`, `Dashboard.tsx` |
+| Manager menu is now 1 start · 2 stop · 3 stop + MT5 · 4 restart · 5 add account · 6 open dashboard · 7 update · 0 exit (practice switch removed from the menu) | ✅ | `goldcycle.ps1`, README |
+
+Quality gates: **187/187 pytest**, mypy clean, ruff clean, `npm run build` clean.
+
+### Simulation on this PC (client-like, separate root `…\scratchpad\clientsim\GoldCycle`, fresh `git clone`)
+- **A** `Install-All` with typos on purpose (kind `x`, login `abc`, server `zz zz`) → each re-asked; wrong password → "MetaTrader 5 refused the login …"; retry → same; cancel → **0 accounts, 0 tasks saved**. MT5's own answer was `Authorization failed (-6)` after 2 s, i.e. a fresh terminal copy reaches Exness and resolves `Exness-MT5Trial15`; only the credentials were refused. **This is what a wrong typed password/server looks like in MT5's Journal: "authorization … failed (Invalid account)".**
+- **B** success path (stand-in: base terminal that remembers the demo login, because no password is stored here): connected, files + logon task + desktop `.url`, bot READY, dashboard login 200, `dry_run=False`, balance read; menu: invalid `9` → asked again, restart / stop / start all via numbers, browser-open requested.
+- **C** wrong password in the account's `.env` → Start prints "running, but NOT connected … Reason: MT5 initialize failed: Terminal: Authorization failed (-6)"; `/health` and the dashboard status carry the same text.
+- **Not tested**: a successful login with a real typed password on a fresh copy (needs the client's/user's credentials; the user will try it), the red banner in a real browser.
 
 ### ⚠️ NOT done yet — next session starts here
+0. Push the above, then on the VPS run the one-liner from README (it updates the existing install). Then try **Manager → 5 (add account)** with the real demo/real credentials on this PC (`$env:GOLDCYCLE_ROOT='D:\gc-test'` first, so it stays in its own folder).
 1. **Update the VPS once** (the old Manager script doesn't know `repair`): in an admin PowerShell,
    `cd $([Environment]::GetFolderPath('Desktop'))\GoldCycle\app; git pull; powershell -ExecutionPolicy Bypass -File scripts\goldcycle.ps1 update`.
    Close the visible bot window first (the update stops/starts the bot hidden). Then check: no black window, dashboard up.

@@ -106,6 +106,7 @@ class CycleEngine:
 
         self.spec: SymbolSpec | None = None
         self.connected = True
+        self.connect_error: str | None = None  # why MT5 is not connected (shown in the dashboard)
         self.last_tick: Tick | None = None
         self._reset_session()
 
@@ -292,6 +293,7 @@ class CycleEngine:
             "session_id": self.session_id,
             "symbol": self.symbol,
             "connected": self.connected,
+            "connect_error": None if self.connected else self.connect_error,
             "config": cfg.model_dump(mode="json") if cfg else None,
             "cycle_no": self.cycle_no,
             "leg": self.leg,
@@ -713,8 +715,12 @@ class CycleEngine:
                 self._emit_state()
         except Exception as e:
             log.warning("reconnect failed: %s", e)
+            if self.connect_error != str(e):
+                self.connect_error = str(e)
+                self._emit_state()  # the dashboard shows the reason
 
     async def _on_disconnect(self, e: Exception) -> None:
+        self.connect_error = str(e)
         if self.connected:
             self.connected = False
             self._log(f"Broker disconnected ({e}) — engine paused, no new orders", "error", toast=True)

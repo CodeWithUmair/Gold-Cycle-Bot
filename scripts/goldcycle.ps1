@@ -60,7 +60,7 @@ function Show-Accounts {
     $list = @(Get-Accounts)
     if ($list.Count -eq 0) { Write-Host '  (no accounts yet)'; return }
     foreach ($a in $list) {
-        $mode = if ($a.Real) { 'REAL ORDERS' } else { 'practice (no orders sent)' }
+        $mode = if ($a.Real) { 'sends orders' } else { 'practice (no orders sent)' }
         $run = if ($a.Running) { 'running' } else { 'stopped' }
         $color = if ($a.Running) { 'Green' } else { 'DarkGray' }
         Write-Host ("  {0,-12} #{1,-11} {2,-20} http://127.0.0.1:{3}  {4,-26} {5}" -f $a.Name, $a.Login, $a.Server, $a.Port, $mode, $run) -ForegroundColor $color
@@ -78,32 +78,67 @@ function Format-EnvValue([string]$v) {
     return '"' + $v.Replace('\', '\\').Replace('"', '\"') + '"'
 }
 
+function Read-Choice([string]$Title, [string[]]$Options) {
+    # Numbered multiple choice. Only the numbers shown are accepted; anything else asks again.
+    Write-Host "`n$Title"
+    for ($i = 0; $i -lt $Options.Count; $i++) { Write-Host ('  {0}) {1}' -f ($i + 1), $Options[$i]) }
+    while ($true) {
+        $a = "$(Read-Host 'Type a number')".Trim()
+        if ($a -match '^\d+$' -and [int]$a -ge 1 -and [int]$a -le $Options.Count) { return [int]$a }
+        Write-Host "  Please type a number from 1 to $($Options.Count)." -ForegroundColor Yellow
+    }
+}
+
 function Find-BaseTerminal {
     $found = @(Get-ChildItem 'C:\Program Files', 'C:\Program Files (x86)' -Directory -ErrorAction SilentlyContinue |
             Where-Object { Test-Path (Join-Path $_.FullName 'terminal64.exe') } | Sort-Object { $_.Name -notmatch 'EXNESS' })
     if ($found.Count -eq 0) {
-        $p = Read-Host 'No MetaTrader 5 found in Program Files. Paste the folder that has terminal64.exe (or Enter to cancel)'
-        if (-not $p -or -not (Test-Path (Join-Path $p 'terminal64.exe'))) { throw 'Install Exness MetaTrader 5 first, then run "Add an account" again.' }
-        return $p
+        throw 'MetaTrader 5 is not installed on this PC. Download it from your Exness account (Terminals > MT5), install it, then choose "Add another account" again.'
     }
     if ($found.Count -eq 1) { return $found[0].FullName }
-    for ($i = 0; $i -lt $found.Count; $i++) { Write-Host "  $($i + 1)) $($found[$i].FullName)" }
-    $n = [int](Read-Host 'Which MetaTrader 5 should be copied for this account? Number')
+    $n = Read-Choice 'Which MetaTrader 5 should the bot use?' @($found | ForEach-Object { $_.FullName })
     return $found[$n - 1].FullName
 }
 
+function New-TerminalCopy([string]$AccountName) {
+    # The bot gets its OWN copy of MetaTrader 5: a clean terminal with no charts and no expert advisors, so nothing
+    # else can trade the account. Returns the path of its terminal64.exe.
+    $term = Join-Path $Root "terminals\$AccountName"
+    if (-not (Test-Path (Join-Path $term 'terminal64.exe'))) {
+        $base = Find-BaseTerminal
+        Write-Host "Copying MetaTrader 5 to $term ..."
+        New-Item -ItemType Directory -Force (Split-Path $term) | Out-Null
+        Copy-Item $base $term -Recurse -Force
+    }
+    return (Join-Path $term 'terminal64.exe')
+}
+
+function Test-Mt5Connection([string]$TerminalExe, [string]$Login, [string]$Password, [string]$Server) {
+    # Logs the bot's MetaTrader in for real and reports the result in plain words (see backend\tools\check_mt5.py).
+    Write-Host 'Connecting to MetaTrader 5. This can take up to a minute ...'
+    $env:GC_MT5_PATH = $TerminalExe; $env:GC_MT5_LOGIN = $Login; $env:GC_MT5_PASSWORD = $Password; $env:GC_MT5_SERVER = $Server
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $line = & $Py (Join-Path $App 'backend\tools\check_mt5.py') 2>$null | Where-Object { $_ -match '^\s*\{' } | Select-Object -Last 1
+    } finally {
+        $ErrorActionPreference = $prev
+        Remove-Item Env:GC_MT5_PATH, Env:GC_MT5_LOGIN, Env:GC_MT5_PASSWORD, Env:GC_MT5_SERVER -ErrorAction SilentlyContinue
+    }
+    if (-not $line) { return [pscustomobject]@{ ok = $false; hint = 'The connection test could not run. Close every MetaTrader 5 window and try again.' } }
+    return ($line | ConvertFrom-Json)
+}
+
 function New-AccountFiles {
-    param([string]$AccountName, [string]$Login, [string]$Password, [string]$Server, [bool]$Real,
+    param([string]$AccountName, [string]$Login, [string]$Password, [string]$Server,
         [string]$DashHash, [int]$Port, [string]$TerminalExe)
     $dir = Join-Path $Root "accounts\$AccountName"
     New-Item -ItemType Directory -Force (Join-Path $dir 'data'), (Join-Path $dir 'logs') | Out-Null
     $magic = 7700501 + ($Port - 8000) * 10   # unique per account; Single uses magic+1
-    $dry = if ($Real) { 'false' } else { 'true' }
     $envText = @(
         "# GoldCycle account '$AccountName'. Written by the GoldCycle Manager. Restart the bot after editing.",
-        "# DRY_RUN=true = practice: real prices, but NO orders are sent to Exness (nothing in MT5/Exness history).",
+        '# DRY_RUN=false: orders go to the account (a demo account trades demo money, a real one real money).',
         'BROKER=mt5',
-        "DRY_RUN=$dry",
+        'DRY_RUN=false',
         "MT5_PATH=$(Format-EnvValue $TerminalExe)",
         "MT5_LOGIN=$Login",
         "MT5_PASSWORD=$(Format-EnvValue $Password)",
@@ -153,50 +188,80 @@ function Register-Account([string]$AccountName, [int]$Port) {
     [IO.File]::WriteAllText((Join-Path $desk "GoldCycle $AccountName.url"), "[InternetShortcut]`r`nURL=http://127.0.0.1:$Port/`r`n")
 }
 
+function Read-AccountDetails([object[]]$Existing) {
+    # Only what is needed: kind of account, its number, the server number and the password.
+    $kind = Read-Choice 'What kind of Exness account is this?' @('A real account (real money)', 'A demo account (practice money)')
+    $word = if ($kind -eq 1) { 'Real' } else { 'Trial' }
+    while ($true) {
+        $login = "$(Read-Host 'MT5 account number (digits only, as shown in your Exness account)')".Trim()
+        if ($login -notmatch '^\d{5,12}$') { Write-Host '  That does not look like an account number. Digits only, for example 474902598.' -ForegroundColor Yellow; continue }
+        if ($Existing | Where-Object { $_.Login -eq $login -or $_.Name -eq $login }) { Write-Host "  Account $login is already added." -ForegroundColor Yellow; continue }
+        break
+    }
+    while ($true) {
+        Write-Host "`nServer: the number at the end of your server name. Exness-MT5${word}8 -> type 8. No number at the end -> just press Enter."
+        $num = "$(Read-Host 'Server number')".Trim()
+        if ($num -match '^\d{0,3}$') { $server = "Exness-MT5$word$num"; break }
+        if ($num -match '^[A-Za-z0-9._-]+$') { $server = $num; break }   # he typed the whole server name: use it as it is
+        Write-Host '  Type only the number (for example 8), or press Enter.' -ForegroundColor Yellow
+    }
+    $password = Read-Plain "`nMT5 password (the TRADING password; typing is hidden)"
+    while ($true) {
+        $dash = Read-Plain 'Dashboard password: what you will type to open the bot page. Press Enter to use the MT5 password'
+        if (-not $dash) { $dash = $password; break }
+        if ($dash.Length -ge 8) { break }
+        Write-Host '  Use at least 8 characters, or press Enter.' -ForegroundColor Yellow
+    }
+    return @{ Login = $login; Server = $server; Password = $password; Dash = $dash }
+}
+
 function Add-Account {
     Write-Host "`n=== Add an MT5 account ===" -ForegroundColor Cyan
     $existing = @(Get-Accounts)
-    do {
-        $n = (Read-Host 'Short name for this account (letters/numbers, e.g. gold1)').Trim()
-        $ok = $n -match '^[A-Za-z0-9_-]{1,20}$' -and -not ($existing | Where-Object Name -eq $n)
-        if (-not $ok) { Write-Host '  Use 1-20 letters/numbers, not already used.' -ForegroundColor Yellow }
-    } until ($ok)
-    do { $login = (Read-Host 'MT5 account number').Trim() } until ($login -match '^\d+$')
-    $password = Read-Plain 'MT5 password (trading password, not the investor one)'
-    $server = (Read-Host 'MT5 server exactly as in Exness, e.g. Exness-MT5Real8 or Exness-MT5Trial15').Trim()
-    Write-Host "`nPractice mode uses real prices but sends NO orders (nothing appears in MT5 / Exness history)."
-    $real = (Read-Host 'Type REAL to send real orders to this account, or press Enter for practice') -ceq 'REAL'
-    do {
-        $dash = Read-Plain 'Choose a dashboard password (10+ characters)'
-        $ok = $dash.Length -ge 10 -and $dash -eq (Read-Plain 'Repeat the dashboard password')
-        if (-not $ok) { Write-Host '  Too short or not the same. Try again.' -ForegroundColor Yellow }
-    } until ($ok)
+    $d = Read-AccountDetails $existing
+    Write-Host @'
 
-    $term = Join-Path $Root "terminals\$n"
-    if (-not (Test-Path (Join-Path $term 'terminal64.exe'))) {
-        $base = Find-BaseTerminal
-        Write-Host "Copying MetaTrader 5 to $term ..."
-        New-Item -ItemType Directory -Force (Split-Path $term) | Out-Null
-        Copy-Item $base $term -Recurse -Force
+A second MetaTrader 5 window opens now. It is the bot's own MetaTrader: leave it open (you can minimize it).
+Your usual MetaTrader 5 is not changed.
+'@ -ForegroundColor Yellow
+    $termExe = New-TerminalCopy $d.Login
+
+    while ($true) {   # nothing is saved until the account really connects
+        $r = Test-Mt5Connection $termExe $d.Login $d.Password $d.Server
+        if ($r.ok) { break }
+        Write-Host "`nNot connected: $($r.hint)" -ForegroundColor Red
+        switch (Read-Choice 'What do you want to do?' @('Try again with the same details', 'Type the account details again', 'Cancel (nothing is saved)')) {
+            2 { $d = Read-AccountDetails $existing; if (-not (Test-Path $termExe)) { $termExe = New-TerminalCopy $d.Login } }
+            3 { Write-Host 'Nothing was saved.'; return }
+        }
+    }
+    $n = "$($d.Login)"   # the account number is the account's name (folder, task, shortcut)
+    $kind = if ($r.demo) { 'DEMO' } else { 'REAL' }
+    Write-Host ("`nConnected: account #{0} on {1} ({2}), balance {3} {4}." -f $r.login, $r.server, $kind, $r.balance, $r.currency) -ForegroundColor Green
+    if (-not $r.algo) {
+        Write-Host 'One thing left: in the bot''s MetaTrader window click the "Algo Trading" button at the top so it turns GREEN. Without it no orders can be sent.' -ForegroundColor Yellow
     }
 
     Push-Location (Join-Path $App 'backend')
     try {
         # Via an env var, not a pipe: PS 5.1 puts a BOM in front of piped text. Not on the command line either.
-        $env:GC_DASH_PW = $dash
+        $env:GC_DASH_PW = $d.Dash
         $hash = & $Py -c "import os; from app.security import hash_password; print(hash_password(os.environ['GC_DASH_PW']))"
         if ($LASTEXITCODE -ne 0 -or -not $hash) { throw 'Could not create the dashboard password hash.' }
     } finally { Remove-Item Env:GC_DASH_PW -ErrorAction SilentlyContinue; Pop-Location }
 
     $port = 8001
     while ($existing | Where-Object Port -eq $port) { $port++ }
-    New-AccountFiles -AccountName $n -Login $login -Password $password -Server $server -Real $real `
-        -DashHash $hash -Port $port -TerminalExe (Join-Path $term 'terminal64.exe') | Out-Null
+    New-AccountFiles -AccountName $n -Login $d.Login -Password $d.Password -Server $d.Server `
+        -DashHash $hash -Port $port -TerminalExe $termExe | Out-Null
     Register-Account $n $port
-    Write-Host "`nAccount '$n' added: dashboard http://127.0.0.1:$port (user: admin). It starts by itself when Windows logs on." -ForegroundColor Green
-    Write-Host 'In the new MT5 window that opens, click "Algo Trading" once (it must be green for real orders).' -ForegroundColor Yellow
+    Write-Host "`nAccount $n added. Dashboard: http://127.0.0.1:$port  (user: admin). It starts by itself when Windows logs on." -ForegroundColor Green
     Start-Bot $n
-    Start-Process "http://127.0.0.1:$port/"
+    if ((Get-BotHealth $port).connected) { Start-Process "http://127.0.0.1:$port/" }
+}
+
+function Get-BotHealth([int]$Port) {
+    try { return (Invoke-WebRequest "http://127.0.0.1:$Port/health" -UseBasicParsing -TimeoutSec 2).Content | ConvertFrom-Json } catch { return $null }
 }
 
 function Start-Bot([string]$AccountName) {
@@ -204,15 +269,19 @@ function Start-Bot([string]$AccountName) {
         if ($AccountName -and $a.Name -ne $AccountName) { continue }
         if ($a.Running) { Write-Host "  $($a.Name): already running"; continue }
         Start-ScheduledTask -TaskName "GoldCycle-$($a.Name)"
-        Write-Host "  $($a.Name): starting ..." -NoNewline
-        $up = $false
-        foreach ($i in 1..45) {
-            Start-Sleep -Seconds 2
-            try { $up = (Invoke-WebRequest "http://127.0.0.1:$($a.Port)/health" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200 } catch { $up = $false }
-            if ($up) { break }
+        Write-Host "  $($a.Name): starting (MetaTrader 5 opens by itself) ..."
+        $h = $null
+        foreach ($i in 1..60) { Start-Sleep -Seconds 2; $h = Get-BotHealth $a.Port; if ($h) { break } }   # the bot page answers
+        for ($i = 0; $h -and -not $h.connected -and $i -lt 30; $i++) { Start-Sleep -Seconds 2; $h = Get-BotHealth $a.Port }   # MT5 login
+        if ($h -and $h.connected) {
+            Write-Host "  $($a.Name): READY and connected to MetaTrader 5. Dashboard: http://127.0.0.1:$($a.Port)" -ForegroundColor Green
+        } elseif ($h) {
+            Write-Host "  $($a.Name): running, but NOT connected to MetaTrader 5 yet." -ForegroundColor Yellow
+            if ($h.error) { Write-Host "    Reason: $($h.error)" -ForegroundColor Yellow }
+            Write-Host "    Look at the bot's own MetaTrader 5 window: is it logged in to account $($a.Login) (green bars at the bottom right)?" -ForegroundColor Yellow
+        } else {
+            Write-Host "  $($a.Name): the bot did not start. Details: $($a.Dir)\logs\console.log" -ForegroundColor Red
         }
-        if ($up) { Write-Host " ready: http://127.0.0.1:$($a.Port)" -ForegroundColor Green }
-        else { Write-Host " not answering yet. Look at the account's MT5 window (login box / wrong server?) and logs\console.log" -ForegroundColor Yellow }
     }
 }
 
@@ -249,15 +318,14 @@ function Select-Account {
     # One account: no question. Several: ask which one (Enter = all). Returns '' for all.
     $list = @(Get-Accounts)
     if ($list.Count -le 1) { return '' }
-    Show-Accounts
-    $n = (Read-Host 'Which account? (name, or press Enter for ALL)').Trim()
-    if ($n -and -not ($list | Where-Object Name -eq $n)) { throw "No account '$n'." }
-    return $n
+    $c = Read-Choice 'Which account?' (@($list | ForEach-Object { "$($_.Name)  ($($_.Server))" }) + 'All accounts')
+    if ($c -gt $list.Count) { return '' }
+    return $list[$c - 1].Name
 }
 
 function Confirm-Stop {
     Write-Host 'Open trades stay on Exness with their TP/SL. While the bot is stopped it will not open the next order.' -ForegroundColor Yellow
-    return ((Read-Host 'Continue? (y/n)') -eq 'y')
+    return ((Read-Choice 'Continue?' @('Yes', 'No')) -eq 1)
 }
 
 function Repair-Accounts {
@@ -281,14 +349,15 @@ function Stop-Bot([string]$AccountName) {
 }
 
 function Switch-Mode([string]$AccountName) {
-    if (-not $AccountName) { Show-Accounts; $AccountName = Read-Host 'Account name' }
+    # Command-line only (`goldcycle.ps1 mode <name>`): a practice mode for testing. Not in the menu: accounts send orders.
+    if (-not $AccountName) { $AccountName = Select-Account }
     $a = @(Get-Accounts) | Where-Object Name -eq $AccountName
     if (-not $a) { throw "No account '$AccountName'." }
     if ($a.Real) {
-        $to = 'true'; Write-Host "$AccountName -> PRACTICE (no orders sent)."
+        if ((Read-Choice "Switch $AccountName to PRACTICE (no orders are sent)?" @('Yes', 'No')) -ne 1) { return }
+        $to = 'true'
     } else {
-        Write-Host 'Before real orders: Algo Trading must be ON in that MT5 window, and no other EA may trade this account.' -ForegroundColor Yellow
-        if ((Read-Host "Type REAL to send real orders from '$AccountName'") -cne 'REAL') { Write-Host 'Not changed.'; return }
+        if ((Read-Choice "Switch $AccountName back to sending orders?" @('Yes', 'No')) -ne 1) { return }
         $to = 'false'
     }
     $text = [IO.File]::ReadAllText($a.EnvFile) -replace '(?m)^DRY_RUN=.*$', "DRY_RUN=$to"
@@ -301,7 +370,7 @@ function Update-App {
     $running = @(Get-Accounts | Where-Object Running | ForEach-Object Name)
     if ($running.Count) {
         Write-Host 'Bots will restart. Open trades keep their TP/SL on the broker; the dashboard asks "Resume?" afterwards.' -ForegroundColor Yellow
-        if ((Read-Host 'Continue? (y/n)') -ne 'y') { return }
+        if ((Read-Choice 'Continue?' @('Yes', 'No')) -ne 1) { return }
         Stop-Bot ''
     }
     Invoke-Native 'git pull' { git -C $App pull --ff-only }
@@ -340,28 +409,25 @@ function Show-Menu {
     2) STOP the bot             (MetaTrader 5 stays open)
     3) STOP the bot AND MetaTrader 5
     4) RESTART everything       (stop the bot and MetaTrader 5, then start again)
-    5) Switch practice <-> real orders
-    6) Add another account
-    7) Open the dashboard
-    8) Update GoldCycle to the newest version
+    5) Add another account
+    6) Open the dashboard
+    7) Update GoldCycle to the newest version
     0) Exit
 '@
         try {
-            switch (Read-Host 'Type a number') {
+            switch ("$(Read-Host 'Type a number')".Trim()) {
                 '1' { Start-Bot (Select-Account) }
                 '2' { $n = Select-Account; if (Confirm-Stop) { Stop-Bot $n } }
                 '3' { $n = Select-Account; if (Confirm-Stop) { Stop-Bot $n; Stop-Mt5 $n } }
                 '4' { $n = Select-Account; if (Confirm-Stop) { Restart-All $n } }
-                '5' { Switch-Mode '' }
-                '6' { Add-Account }
-                '7' {
-                    Show-Accounts
-                    $list = @(Get-Accounts)
-                    $a = if ($list.Count -eq 1) { $list[0] } else { $list | Where-Object Name -eq (Read-Host 'Account name') }
-                    if ($a) { Start-Process "http://127.0.0.1:$($a.Port)/" }
+                '5' { Add-Account }
+                '6' {
+                    $n = Select-Account
+                    foreach ($a in @(Get-Accounts)) { if (-not $n -or $a.Name -eq $n) { Start-Process "http://127.0.0.1:$($a.Port)/" } }
                 }
-                '8' { Update-App }
+                '7' { Update-App }
                 '0' { return }
+                default { Write-Host 'Please type one of the numbers shown above.' -ForegroundColor Yellow }
             }
         } catch { Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red }
     }
