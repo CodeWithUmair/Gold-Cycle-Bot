@@ -9,9 +9,19 @@
 function Install-GoldCycle {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is very slow with the progress bar on PS 5.1
-    $root = if ($env:GOLDCYCLE_ROOT) { $env:GOLDCYCLE_ROOT } else { 'C:\GoldCycle' }
     $repo = 'https://github.com/CodeWithUmair/Gold-Cycle-Bot.git'
+    # Same command everywhere: an install that already exists on this PC (found through its logon tasks,
+    # wherever it was put) is UPDATED; otherwise a new one goes to C:\GoldCycle. Never a second copy.
+    $root = $env:GOLDCYCLE_ROOT
+    if (-not $root) {
+        foreach ($t in @(Get-ScheduledTask -TaskName 'GoldCycle-*' -ErrorAction SilentlyContinue)) {
+            if ("$($t.Actions[0].Arguments)" -match '"?([A-Za-z]:\\[^"]*?)\\accounts\\[^\\"]+\\(launch\.vbs|start\.bat)') { $root = $Matches[1]; break }
+        }
+    }
+    if (-not $root) { $root = 'C:\GoldCycle' }
     $app = Join-Path $root 'app'
+    $existing = Test-Path (Join-Path $app '.git')
+    if ($existing) { Write-Host "GoldCycle is already installed in $root : updating it." -ForegroundColor Cyan }
 
     $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
         [Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -47,8 +57,7 @@ function Install-GoldCycle {
         Install-From 'Node.js 22' 'https://nodejs.org/dist/v22.20.0/node-v22.20.0-x64.msi' '/qn /norestart'
     } else { Write-Host 'Node.js: OK' }
 
-    if (Test-Path (Join-Path $app '.git')) {
-        Write-Host "Updating $app ..." -ForegroundColor Cyan
+    if ($existing) {
         git -C $app pull --ff-only
     } else {
         Write-Host "Downloading GoldCycle to $app ..." -ForegroundColor Cyan
@@ -57,7 +66,8 @@ function Install-GoldCycle {
     }
     if ($LASTEXITCODE -ne 0) { throw 'Downloading GoldCycle failed (see the git message above).' }
 
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $app 'scripts\goldcycle.ps1') install
+    $mode = if ($existing) { 'update' } else { 'install' }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $app 'scripts\goldcycle.ps1') $mode
 }
 
 try { Install-GoldCycle } catch { Write-Host "`nSETUP STOPPED: $($_.Exception.Message)" -ForegroundColor Red }

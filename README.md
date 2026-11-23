@@ -44,6 +44,9 @@ cd backend
    Set-ExecutionPolicy Bypass -Scope Process -Force; [Net.ServicePointManager]::SecurityProtocol='Tls12'; irm https://raw.githubusercontent.com/CodeWithUmair/Gold-Cycle-Bot/main/scripts/setup.ps1 | iex
    ```
 
+   The same line works on any PC, from any folder, and also **updates**: if GoldCycle is already installed on that PC
+   (wherever it was put) it updates that install instead of making a second one.
+
    While the repo is **private** (the line above then fails), on a machine where git is already logged in to GitHub:
 
    ```powershell
