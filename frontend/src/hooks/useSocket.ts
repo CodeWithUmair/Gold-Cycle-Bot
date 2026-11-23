@@ -6,10 +6,14 @@ export interface SocketHandlers {
   onLog?: (l: LogEntry) => void
   onToast?: (l: LogEntry) => void
   onCycle?: (c: CycleRow) => void
+  /** The server is back but no longer knows this login (session expired). */
+  onAuthLost?: () => void
 }
 
 interface SocketState {
   wsConnected: boolean
+  /** How many times the socket has connected: 1 = first load, more = it came back after a drop. */
+  connectCount: number
   engines: PerMode<EngineSnapshot | null>
   account: Account | null
   tick: Tick | null
@@ -29,6 +33,7 @@ type Msg =
 export function useSocket(enabled: boolean, handlers: SocketHandlers): SocketState {
   const [state, setState] = useState<SocketState>({
     wsConnected: false,
+    connectCount: 0,
     engines: { CYCLE: null, SINGLE: null },
     account: null,
     tick: null,
@@ -50,7 +55,7 @@ export function useSocket(enabled: boolean, handlers: SocketHandlers): SocketSta
       ws = new WebSocket(`${proto}://${location.host}/ws`)
       ws.onopen = () => {
         retry = 500
-        setState((s) => ({ ...s, wsConnected: true }))
+        setState((s) => ({ ...s, wsConnected: true, connectCount: s.connectCount + 1 }))
         ping = window.setInterval(() => ws?.readyState === WebSocket.OPEN && ws.send('ping'), 20000)
       }
       ws.onmessage = (ev) => {
@@ -87,10 +92,22 @@ export function useSocket(enabled: boolean, handlers: SocketHandlers): SocketSta
       ws.onclose = () => {
         window.clearInterval(ping)
         setState((s) => ({ ...s, wsConnected: false }))
-        if (!closed) {
-          timer = window.setTimeout(connect, retry)
-          retry = Math.min(retry * 2, 8000)
-        }
+        if (closed) return
+        // The bot restarted, or it is still starting. Ask whether this login is still valid: the answer
+        // is a 401 (go to the login page), a network error (server still down: keep retrying) or OK.
+        void fetch('/api/auth/me', { credentials: 'same-origin' })
+          .then((r) => {
+            if (r.status === 401) {
+              closed = true
+              h.current.onAuthLost?.()
+            }
+          })
+          .catch(() => undefined) // server not up yet
+          .finally(() => {
+            if (closed) return
+            timer = window.setTimeout(connect, retry)
+            retry = Math.min(retry * 2, 3000)
+          })
       }
     }
     connect()

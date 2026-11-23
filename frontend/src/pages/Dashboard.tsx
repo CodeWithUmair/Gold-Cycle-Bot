@@ -47,6 +47,7 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
   }, [])
 
   const ws = useSocket(true, {
+    onAuthLost: onLoggedOut,
     onTick: (t) => tickRef.current?.(t),
     onLog: (l) => setLogs((ls) => [l, ...ls].slice(0, 500)),
     onToast: toast,
@@ -87,7 +88,7 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
       .events(300)
       .then((ev) => setLogs(ev.map((x) => ({ ts: x.ts, level: x.level as LogEntry['level'], msg: x.message }))))
       .catch(() => undefined)
-  }, [toast])
+  }, [toast, ws.connectCount]) // also after the bot restarted and the page reconnected
 
   // journal follows the current session
   const sessionId = engine?.session_id ?? null
@@ -96,7 +97,7 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
       .cycles(sessionId)
       .then(setCycles)
       .catch(() => undefined)
-  }, [sessionId])
+  }, [sessionId, ws.connectCount])
 
   // kill switch hotkey
   useEffect(() => {
@@ -166,6 +167,12 @@ export function Dashboard({ onLoggedOut }: { onLoggedOut: () => void }) {
         view={view}
         onView={setView}
       />
+      {!ws.wsConnected && ws.connectCount > 0 && (
+        <div className="border-b border-down/40 bg-down/15 px-4 py-1.5 text-center text-xs font-medium text-down">
+          Connection to the bot lost. Reconnecting by itself, no need to refresh this page.
+          {' '}Open trades keep their TP/SL on the broker.
+        </div>
+      )}
       {dryRun && (
         <div className="border-b border-gold/30 bg-gold/10 px-4 py-1.5 text-center text-xs font-medium text-gold">
           PRACTICE MODE (dry run): no orders are sent to Exness. Trades here are on paper and will not appear in MT5 or

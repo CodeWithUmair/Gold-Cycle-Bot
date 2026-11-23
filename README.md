@@ -59,6 +59,11 @@ Each account gets its own MT5 copy (`C:\GoldCycle\terminals\<name>`), settings, 
 (`C:\GoldCycle\accounts\<name>`), and dashboard (`http://127.0.0.1:8001`, `8002`, …; desktop shortcut
 "GoldCycle <name>"). Bots start by themselves when Windows logs on.
 
+The bot runs **hidden**: there is no black window to click, freeze or close by mistake. If it crashes it starts
+again by itself within ~6 seconds, and an open dashboard page reconnects without refreshing or logging in again
+(if the bot was running a trade it asks "Resume?" once; the trade keeps its TP/SL on the broker meanwhile).
+What the bot prints goes to `C:\GoldCycle\accounts\<name>\logs\console.log`.
+
 Everything else: the **GoldCycle Manager** desktop shortcut → add an account, start / stop all, **practice ↔ real
 orders**, open a dashboard, update. (`scripts\goldcycle.ps1 <command>` does the same from a terminal.)
 

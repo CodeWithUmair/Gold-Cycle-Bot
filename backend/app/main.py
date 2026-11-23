@@ -5,6 +5,7 @@ Run:  python -m app.main     (binds 127.0.0.1 by default — never expose public
 
 import asyncio
 import logging
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -79,6 +80,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     repo = Repo(s.db_path)
     broker = build_broker(s)
     hub = Hub()
+    sessions = SessionStore(ttl_s=s.session_ttl_hours * 3600)
+    sessions.attach(repo.get_setting("auth_sessions"), lambda v: repo.set_setting("auth_sessions", v))
     connected = True
     try:
         await broker.connect()
@@ -106,7 +109,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         broker=broker,
         engines=engines,
         hub=hub,
-        sessions=SessionStore(ttl_s=s.session_ttl_hours * 3600),
+        sessions=sessions,
         limiter=LoginLimiter(),
     )
     stop = asyncio.Event()
@@ -181,7 +184,28 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
+def disable_console_quickedit() -> None:
+    """A click in a Windows console starts "Select" mode, which freezes the process until Esc. For a bot that
+    must keep trading, turn that off in our own console (no-op when there is none, or off Windows)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        k32 = ctypes.windll.kernel32  # type: ignore[attr-defined,unused-ignore]
+        handle = k32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if not k32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return  # stdin is not a console (hidden/redirected run)
+        enable_quick_edit, enable_extended = 0x0040, 0x0080
+        if not k32.SetConsoleMode(handle, (mode.value & ~enable_quick_edit) | enable_extended):
+            log.warning("could not turn off console QuickEdit: a click in this window can pause the bot")
+    except Exception as e:  # never stop the bot over this
+        log.warning("could not turn off console QuickEdit: %s", e)
+
+
 def main() -> None:
+    disable_console_quickedit()
     s = get_settings()
     if s.host not in ("127.0.0.1", "localhost", "::1"):
         log.warning("HOST=%s: dashboard reachable from the network. Only do this behind Tailscale/VPN.", s.host)

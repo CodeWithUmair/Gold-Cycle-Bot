@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings, get_settings
-from app.security import hash_password
+from app.security import SessionStore, hash_password
 
 PASSWORD = "correct-horse-battery"
 
@@ -31,6 +31,35 @@ def test_missing_env_file_refuses_to_start(tmp_path: Path, monkeypatch: pytest.M
             get_settings()
     finally:
         get_settings.cache_clear()
+
+
+def test_login_survives_restart_and_is_stored_hashed() -> None:
+    saved: list[str] = []
+    a = SessionStore(ttl_s=3600)
+    a.attach(None, saved.append)
+    token, s = a.create("admin")
+    assert token not in saved[-1]  # only a hash is on disk
+
+    b = SessionStore(ttl_s=3600)  # "restart": a new store loads what the old one saved
+    b.attach(saved[-1], saved.append)
+    got = b.get(token)
+    assert got is not None and got.csrf == s.csrf
+    b.delete(token)
+    c = SessionStore(ttl_s=3600)
+    c.attach(saved[-1], saved.append)
+    assert c.get(token) is None
+
+
+def test_expired_and_corrupt_saved_logins_are_dropped() -> None:
+    a = SessionStore(ttl_s=-1)  # already expired
+    saved: list[str] = []
+    a.attach(None, saved.append)
+    token, _ = a.create("admin")
+    b = SessionStore(ttl_s=3600)
+    b.attach(saved[-1], saved.append)
+    assert b.get(token) is None
+    b.attach("{not json", saved.append)  # corrupt: logged, nobody logged in, no crash
+    assert b.get(token) is None
 
 
 def test_session_cookie_is_per_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

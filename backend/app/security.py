@@ -4,15 +4,21 @@ Generate the admin password hash for .env with:
     python -m app.security
 """
 
+import hashlib
+import json
+import logging
 import secrets
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import HTTPException, Request
 
 CSRF_HEADER = "x-csrf-token"
+
+log = logging.getLogger("goldcycle")
 
 
 def cookie_name_for(port: int) -> str:
@@ -47,29 +53,52 @@ class Session:
     expires: float
 
 
+def _key(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()  # only hashes are stored, never the cookie value
+
+
 @dataclass
 class SessionStore:
+    """Logins, keyed by token hash. `attach` makes them survive a restart, so a bot restart or update
+    doesn't log the trader's open browser tab out."""
+
     ttl_s: float
     _sessions: dict[str, Session] = field(default_factory=dict)
+    _save: Callable[[str], None] | None = None
+
+    def attach(self, saved: str | None, save: Callable[[str], None]) -> None:
+        self._save = save
+        if saved:
+            try:
+                self._sessions = {k: Session(**v) for k, v in json.loads(saved).items()}
+            except (ValueError, TypeError):
+                log.warning("saved logins unreadable: everyone has to log in again")
+        self._sessions = {k: s for k, s in self._sessions.items() if s.expires >= time.time()}
+
+    def _persist(self) -> None:
+        if self._save:
+            self._save(json.dumps({k: asdict(s) for k, s in self._sessions.items()}))
 
     def create(self, username: str) -> tuple[str, Session]:
         token = secrets.token_urlsafe(32)
         s = Session(username, secrets.token_urlsafe(32), time.time() + self.ttl_s)
-        self._sessions[token] = s
+        self._sessions[_key(token)] = s
+        self._persist()
         return token, s
 
     def get(self, token: str | None) -> Session | None:
         if not token:
             return None
-        s = self._sessions.get(token)
+        s = self._sessions.get(_key(token))
         if s is None or s.expires < time.time():
-            self._sessions.pop(token, None)
+            if self._sessions.pop(_key(token), None) is not None:
+                self._persist()
             return None
         return s
 
     def delete(self, token: str | None) -> None:
-        if token:
-            self._sessions.pop(token, None)
+        if token and self._sessions.pop(_key(token), None) is not None:
+            self._persist()
 
 
 @dataclass

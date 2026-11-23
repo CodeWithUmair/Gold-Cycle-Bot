@@ -118,23 +118,32 @@ function New-AccountFiles {
         "LOG_DIR=$(Format-EnvValue (Join-Path $dir 'logs'))"
     ) -join "`r`n"
     [IO.File]::WriteAllText((Join-Path $dir '.env'), $envText + "`r`n", $Utf8)
+    Write-Launchers $AccountName $Port
+    return $dir
+}
+
+function Write-Launchers([string]$AccountName, [int]$Port) {
+    # The bot runs HIDDEN (launch.vbs -> start.bat): no black window to click on (a click freezes a console)
+    # or close by mistake, and start.bat starts it again 6 s after any crash. Output goes to logs\console.log.
+    $dir = Join-Path $Root "accounts\$AccountName"
     $bat = @(
         '@echo off',
         "title GoldCycle - $AccountName (port $Port)",
         "set GOLDCYCLE_ENV_FILE=$dir\.env",
         "cd /d `"$App\backend`"",
-        '.venv\Scripts\python.exe -m app.main',
-        'echo.',
-        'echo GoldCycle stopped. If this was not on purpose, take a screenshot of the error above.',
-        'pause'
+        ':loop',
+        "`".venv\Scripts\python.exe`" -m app.main > `"$dir\logs\console.log`" 2>&1",
+        'ping -n 6 127.0.0.1 >nul',
+        'goto loop'
     ) -join "`r`n"
     [IO.File]::WriteAllText((Join-Path $dir 'start.bat'), $bat + "`r`n", [Text.Encoding]::ASCII)
-    return $dir
+    $vbs = 'CreateObject("WScript.Shell").Run "cmd /c ""' + (Join-Path $dir 'start.bat') + '""", 0, True'
+    [IO.File]::WriteAllText((Join-Path $dir 'launch.vbs'), $vbs + "`r`n", [Text.Encoding]::ASCII)
 }
 
 function Register-Account([string]$AccountName, [int]$Port) {
-    $bat = Join-Path $Root "accounts\$AccountName\start.bat"
-    $act = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument "/c `"$bat`""
+    $vbs = Join-Path $Root "accounts\$AccountName\launch.vbs"
+    $act = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "//B //Nologo `"$vbs`""
     $trg = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
     # ExecutionTimeLimit 0: the default (3 days) would kill the bot after 72 hours
     $set = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
@@ -186,6 +195,7 @@ function Add-Account {
     Write-Host "`nAccount '$n' added: dashboard http://127.0.0.1:$port (user: admin). It starts by itself when Windows logs on." -ForegroundColor Green
     Write-Host 'In the new MT5 window that opens, click "Algo Trading" once (it must be green for real orders).' -ForegroundColor Yellow
     Start-Bot $n
+    Start-Process "http://127.0.0.1:$port/"
 }
 
 function Start-Bot([string]$AccountName) {
@@ -193,22 +203,42 @@ function Start-Bot([string]$AccountName) {
         if ($AccountName -and $a.Name -ne $AccountName) { continue }
         if ($a.Running) { Write-Host "  $($a.Name): already running"; continue }
         Start-ScheduledTask -TaskName "GoldCycle-$($a.Name)"
-        Write-Host "  $($a.Name): started (dashboard http://127.0.0.1:$($a.Port) in a few seconds)" -ForegroundColor Green
+        Write-Host "  $($a.Name): starting ..." -NoNewline
+        $up = $false
+        foreach ($i in 1..45) {
+            Start-Sleep -Seconds 2
+            try { $up = (Invoke-WebRequest "http://127.0.0.1:$($a.Port)/health" -UseBasicParsing -TimeoutSec 2).StatusCode -eq 200 } catch { $up = $false }
+            if ($up) { break }
+        }
+        if ($up) { Write-Host " ready: http://127.0.0.1:$($a.Port)" -ForegroundColor Green }
+        else { Write-Host " not answering yet. Look at the account's MT5 window (login box / wrong server?) and logs\console.log" -ForegroundColor Yellow }
     }
 }
 
 function Stop-Tree([int]$ProcId) {
     # The bot's cmd + python, but NOT the MT5 terminal: mt5.initialize() starts it as a child of the bot,
-    # and closing the bot must leave the trader's MT5 running.
-    foreach ($c in @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ProcId")) {
-        if ($c.Name -ne 'terminal64.exe') { Stop-Tree $c.ProcessId }
-    }
+    # and closing the bot must leave the trader's MT5 running. Parent first, so start.bat's restart loop
+    # cannot start a new python between the two kills.
+    $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$ProcId" | Where-Object { $_.Name -ne 'terminal64.exe' })
     Stop-Process -Id $ProcId -Force -ErrorAction SilentlyContinue
+    foreach ($c in $children) { Stop-Tree $c.ProcessId }
+}
+
+function Repair-Accounts {
+    # Rewrites every account's launcher + logon task from the current code (an account made by an older
+    # version gets the hidden, self-restarting launcher), and removes tasks left by older versions.
+    foreach ($a in @(Get-Accounts)) {
+        New-Item -ItemType Directory -Force (Join-Path $a.Dir 'logs') | Out-Null
+        Write-Launchers $a.Name $a.Port
+        Register-Account $a.Name $a.Port
+        Write-Host "  $($a.Name): launcher updated (runs hidden, restarts itself if it crashes)"
+    }
 }
 
 function Stop-Bot([string]$AccountName) {
     foreach ($a in @(Get-Accounts)) {
         if ($AccountName -and $a.Name -ne $AccountName) { continue }
+        Stop-ScheduledTask -TaskName "GoldCycle-$($a.Name)" -ErrorAction SilentlyContinue
         foreach ($p in @(Get-BotProcess $a.Name)) { Stop-Tree $p.ProcessId }
         Write-Host "  $($a.Name): stopped"
     }
@@ -240,12 +270,14 @@ function Update-App {
     }
     Invoke-Native 'git pull' { git -C $App pull --ff-only }
     Install-App
+    Repair-Accounts
     foreach ($n in $running) { Start-Bot $n }
-    Write-Host 'Updated. Press Ctrl+F5 in the dashboard tabs and log in again.' -ForegroundColor Green
+    Write-Host 'Updated. Open dashboard pages reconnect by themselves.' -ForegroundColor Green
 }
 
 function Install-All {
     Install-App
+    Repair-Accounts
     $old = Get-ScheduledTask -TaskName 'GoldCycle' -ErrorAction SilentlyContinue
     if ($old) {
         Disable-ScheduledTask -TaskName 'GoldCycle' | Out-Null
@@ -295,6 +327,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         'stop' { Stop-Bot $Name }
         'mode' { Switch-Mode $Name }
         'update' { Update-App }
+        'repair' { Repair-Accounts }
         'open' { Start-Process "http://127.0.0.1:$((@(Get-Accounts) | Where-Object Name -eq $Name).Port)/" }
         default { throw "Unknown command '$Command'. Use: install, add, list, start, stop, mode, update, open" }
     }

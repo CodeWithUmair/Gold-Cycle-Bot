@@ -492,6 +492,40 @@ account; repo goes public for the one-liner. No ADR.
 
 ---
 
+## Session 7 — 2026-11-24 — no more "right-click the CMD, restart, refresh the page" (client is non-technical)
+
+### State before
+Session 6 pushed (`698b604`) and installed on the VPS as account `gold-bot-umair` (REAL orders on demo 474902598).
+The client's real pain: the bot's visible black window **freezes on any click** (title "Select …", QuickEdit,
+Session 2 Finding #4), the fix was Esc/right-click + restart + refresh + log in again.
+
+### What was done
+| Item | Result | Files |
+|---|---|---|
+| **Bot runs hidden**: task → `wscript launch.vbs` → hidden `start.bat`. No window to click or close. `start.bat` is a restart loop (new python 6 s after any exit). Output → `accounts\<name>\logs\console.log` (overwritten per run) | ✅ local: started via the task, MT5 window still shows, python killed → back in 6 s | `scripts/goldcycle.ps1` (`Write-Launchers`, `Register-Account`) |
+| **`repair` / `update` migrate old accounts** to the hidden launcher + new task (`Repair-Accounts`, also run by `install` and Manager "Update") | ✅ migrated the old-style test accounts | `goldcycle.ps1` |
+| **Logins survive a bot restart**: sessions persisted in the account's DB (`settings.auth_sessions`), stored as SHA-256 of the cookie, expired/corrupt entries dropped | ✅ 2 tests + live (same cookie → 200 after the crash) | `security.py`, `main.py`, `tests/test_accounts.py` |
+| **Dashboard reconnects by itself**: after a socket drop it asks `/api/auth/me`: 401 → login page, server still down → keeps retrying (≤3 s), OK → reconnects and reloads status/log/journal. Red bar "Connection to the bot lost. Reconnecting by itself …" | ✅ build (not clicked through in a browser) | `useSocket.ts`, `Dashboard.tsx` |
+| Console **QuickEdit turned off** in the bot's own console (only matters when run visibly, e.g. old `start.bat`) | ✅ unit-free (needs a real console) | `main.py` |
+| Manager: Start waits for `/health` and says "ready" or what to check; Add-account opens the dashboard; Stop also stops the task and kills parent before children | ✅ | `goldcycle.ps1` |
+
+Quality gates: **184/184 pytest**, mypy clean, ruff clean, `npm run build` clean.
+
+### ⚠️ NOT done yet — next session starts here
+1. **Update the VPS once** (the old Manager script doesn't know `repair`): in an admin PowerShell,
+   `cd $([Environment]::GetFolderPath('Desktop'))\GoldCycle\app; git pull; powershell -ExecutionPolicy Bypass -File scripts\goldcycle.ps1 update`.
+   Close the visible bot window first (the update stops/starts the bot hidden). Then check: no black window, dashboard up.
+2. The browser reconnect UI was only type-checked/built, not watched live: on the VPS, restart the bot (Manager) with a
+   dashboard tab open and see the red bar then recovery without refresh.
+3. After a crash restart the engine asks "Resume?" (`RESUME_ON_RESTART=false`, ADR-0010). Ask the client if he wants
+   auto-resume (`RESUME_ON_RESTART=true` in the account's `.env`); not changed.
+4. Live trading test with the market open (Session 6 list) and Session 3–5 items still open.
+
+### Decisions made
+Hidden launcher + restart loop instead of QuickEdit-only fixes. No ADR.
+
+---
+
 ## Template for the next session
 
 ```markdown
