@@ -516,6 +516,8 @@ Session 2 Finding #4), the fix was Esc/right-click + restart + refresh + log in 
 
 | **Algo Trading switched on automatically** (a fresh MT5 copy has it OFF and refuses every order): after the connection test, `Enable-AlgoTrading` closes the bot's terminal, sets `[Experts] Enabled=1, Account=0, Profile=0` in its data folder's `config\common.ini` (UTF-16, found through `origin.txt`), and the bot starts the terminal again. Falls back to "click Algo Trading" if the data folder isn't found | ✅ real run: `algo trading allowed=True` with no click | `goldcycle.ps1` (`Stop-Terminal`, `Enable-AlgoTrading`) |
 
+| **`GoldCycle-Setup.bat`** (repo root): the file to send the client. Double-click → asks admin once (`net session` check + `Start-Process -Verb RunAs`) → runs the same `setup.ps1` one-liner. Root = `C:\GoldCycle` (no path for the client to set; `GOLDCYCLE_ROOT` was only my test override) or the existing install if GoldCycle is already on the PC; same file updates. Not tied to where the .bat is saved (a Desktop / Downloads folder is often OneDrive-synced). `.gitattributes`: `*.bat` kept CRLF | ⚠️ download command + admin check tested through `cmd`; **the UAC click and the full run were not** (needs a person) | `GoldCycle-Setup.bat`, `.gitattributes`, README |
+
 Quality gates: **187/187 pytest**, mypy clean, ruff clean, `npm run build` clean.
 
 ### REAL end-to-end run on this PC (user's demo account 474902598 @ Exness-MT5Trial15, typed as a client would)

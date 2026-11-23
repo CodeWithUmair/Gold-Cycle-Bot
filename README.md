@@ -37,6 +37,12 @@ cd backend
 
 ## One-command install, several MT5 accounts (for the trader)
 
+**Easiest for a non-technical person: send him the file [GoldCycle-Setup.bat](GoldCycle-Setup.bat).** He saves it
+anywhere (Desktop, Downloads, USB) and double-clicks it, clicks **Yes** when Windows asks for permission, and answers
+the numbered questions. It installs to `C:\GoldCycle` (no folder to choose, every PC has a C: drive) or, if GoldCycle
+is already on that PC, updates it where it is. If the e-mail / browser blocks a `.bat`, send it zipped.
+The command below does exactly the same thing from PowerShell.
+
 1. Install **Exness MetaTrader 5** once (normal installer) and log in to any account.
 2. Right-click **PowerShell** → **Run as administrator**, paste this line and press Enter:
 
