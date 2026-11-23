@@ -67,8 +67,12 @@ again by itself within ~6 seconds, and an open dashboard page reconnects without
 (if the bot was running a trade it asks "Resume?" once; the trade keeps its TP/SL on the broker meanwhile).
 What the bot prints goes to `C:\GoldCycle\accounts\<name>\logs\console.log`.
 
-Everything else: the **GoldCycle Manager** desktop shortcut → add an account, start / stop all, **practice ↔ real
-orders**, open a dashboard, update. (`scripts\goldcycle.ps1 <command>` does the same from a terminal.)
+Everything else: double-click the **GoldCycle Manager** desktop shortcut. It shows the accounts and asks what to do:
+**1** start the bot (MT5 opens by itself) · **2** stop the bot · **3** stop the bot **and** MT5 · **4** restart
+everything · **5** practice ↔ real orders · **6** add an account · **7** open the dashboard · **8** update.
+No shortcut? Run `powershell -ExecutionPolicy Bypass -File C:\GoldCycle\app\scripts\goldcycle.ps1` (use the folder
+GoldCycle was installed in). `goldcycle.ps1 <command>` (`start`, `stop`, `stop-mt5`, `restart`, `update`, …) does the
+same from a terminal. Open trades stay on Exness with their TP/SL while the bot is stopped.
 
 > **Practice mode** (`DRY_RUN=true`, the default for a new account) uses real prices but sends **no orders**: trades
 > show in the dashboard (yellow "PRACTICE MODE" bar) but **not** in MT5 or Exness history. Switch the account to real

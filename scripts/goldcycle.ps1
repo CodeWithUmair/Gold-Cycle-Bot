@@ -5,7 +5,8 @@
 #   C:\GoldCycle\terminals\<name>\    a copy of the Exness MT5 terminal for that account
 #
 # Double-click "GoldCycle Manager" on the desktop for the menu, or:
-#   goldcycle.ps1 install | add | list | start [name] | stop [name] | mode <name> | update | open <name>
+#   goldcycle.ps1 install | add | list | start [name] | stop [name] | stop-mt5 [name] | restart [name]
+#                 | mode <name> | update | repair | open <name>
 param([string]$Command = 'menu', [string]$Name = '')
 
 $ErrorActionPreference = 'Stop'
@@ -43,7 +44,7 @@ function Get-Accounts {
         }
         [pscustomobject]@{
             Name = $d.Name; Dir = $d.FullName; EnvFile = $envFile
-            Port = [int]$kv['PORT']; Login = $kv['MT5_LOGIN']; Server = $kv['MT5_SERVER']
+            Port = [int]$kv['PORT']; Login = $kv['MT5_LOGIN']; Server = $kv['MT5_SERVER']; Mt5Path = $kv['MT5_PATH']
             Real = ($kv['DRY_RUN'] -eq 'false'); Running = [bool](Get-BotProcess $d.Name)
         }
     }
@@ -224,6 +225,41 @@ function Stop-Tree([int]$ProcId) {
     foreach ($c in $children) { Stop-Tree $c.ProcessId }
 }
 
+function Stop-Mt5([string]$AccountName) {
+    # Closes the account's own MT5 window (the terminal the bot started). Open trades stay on the broker.
+    foreach ($a in @(Get-Accounts)) {
+        if ($AccountName -and $a.Name -ne $AccountName) { continue }
+        if (-not $a.Mt5Path) { continue }
+        $procs = @(Get-Process terminal64 -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $a.Mt5Path })
+        foreach ($p in $procs) { [void]$p.CloseMainWindow() }
+        for ($i = 0; $i -lt 10 -and @($procs | Where-Object { -not $_.HasExited }).Count; $i++) { Start-Sleep -Seconds 1 }
+        foreach ($p in $procs) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+        Write-Host "  $($a.Name): MT5 closed"
+    }
+}
+
+function Restart-All([string]$AccountName) {
+    Stop-Bot $AccountName
+    Stop-Mt5 $AccountName
+    Start-Sleep -Seconds 3
+    Start-Bot $AccountName
+}
+
+function Select-Account {
+    # One account: no question. Several: ask which one (Enter = all). Returns '' for all.
+    $list = @(Get-Accounts)
+    if ($list.Count -le 1) { return '' }
+    Show-Accounts
+    $n = (Read-Host 'Which account? (name, or press Enter for ALL)').Trim()
+    if ($n -and -not ($list | Where-Object Name -eq $n)) { throw "No account '$n'." }
+    return $n
+}
+
+function Confirm-Stop {
+    Write-Host 'Open trades stay on Exness with their TP/SL. While the bot is stopped it will not open the next order.' -ForegroundColor Yellow
+    return ((Read-Host 'Continue? (y/n)') -eq 'y')
+}
+
 function Repair-Accounts {
     # Rewrites every account's launcher + logon task from the current code (an account made by an older
     # version gets the hidden, self-restarting launcher), and removes tasks left by older versions.
@@ -297,20 +333,34 @@ function Show-Menu {
     while ($true) {
         Write-Host "`n==== GoldCycle Manager ($Root) ====" -ForegroundColor Cyan
         Show-Accounts
-        Write-Host "`n  1) Add an account        2) Start all bots      3) Stop all bots"
-        Write-Host '  4) Practice <-> real     5) Open a dashboard    6) Update GoldCycle     0) Exit'
+        Write-Host @'
+
+  What do you want to do?
+    1) START the bot            (MetaTrader 5 opens by itself)
+    2) STOP the bot             (MetaTrader 5 stays open)
+    3) STOP the bot AND MetaTrader 5
+    4) RESTART everything       (stop the bot and MetaTrader 5, then start again)
+    5) Switch practice <-> real orders
+    6) Add another account
+    7) Open the dashboard
+    8) Update GoldCycle to the newest version
+    0) Exit
+'@
         try {
-            switch (Read-Host 'Choose') {
-                '1' { Add-Account }
-                '2' { Start-Bot '' }
-                '3' { Stop-Bot '' }
-                '4' { Switch-Mode '' }
-                '5' {
+            switch (Read-Host 'Type a number') {
+                '1' { Start-Bot (Select-Account) }
+                '2' { $n = Select-Account; if (Confirm-Stop) { Stop-Bot $n } }
+                '3' { $n = Select-Account; if (Confirm-Stop) { Stop-Bot $n; Stop-Mt5 $n } }
+                '4' { $n = Select-Account; if (Confirm-Stop) { Restart-All $n } }
+                '5' { Switch-Mode '' }
+                '6' { Add-Account }
+                '7' {
                     Show-Accounts
-                    $a = @(Get-Accounts) | Where-Object Name -eq (Read-Host 'Account name')
+                    $list = @(Get-Accounts)
+                    $a = if ($list.Count -eq 1) { $list[0] } else { $list | Where-Object Name -eq (Read-Host 'Account name') }
                     if ($a) { Start-Process "http://127.0.0.1:$($a.Port)/" }
                 }
-                '6' { Update-App }
+                '8' { Update-App }
                 '0' { return }
             }
         } catch { Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red }
@@ -325,6 +375,8 @@ if ($MyInvocation.InvocationName -ne '.') {
         'list' { Show-Accounts }
         'start' { Start-Bot $Name }
         'stop' { Stop-Bot $Name }
+        'stop-mt5' { Stop-Bot $Name; Stop-Mt5 $Name }
+        'restart' { Restart-All $Name }
         'mode' { Switch-Mode $Name }
         'update' { Update-App }
         'repair' { Repair-Accounts }
