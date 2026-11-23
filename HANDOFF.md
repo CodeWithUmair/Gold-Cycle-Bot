@@ -514,13 +514,24 @@ Session 2 Finding #4), the fix was Esc/right-click + restart + refresh + log in 
 | **"MT5 not connected" now says why**: engine keeps `connect_error` (snapshot + `/health` `error`), red dashboard bar "The bot is not connected to MetaTrader 5 …  Reason: …", and Manager Start prints READY / NOT connected + reason | ✅ | `cycle_engine.py`, `main.py`, `types.ts`, `Dashboard.tsx` |
 | Manager menu is now 1 start · 2 stop · 3 stop + MT5 · 4 restart · 5 add account · 6 open dashboard · 7 update · 0 exit (practice switch removed from the menu) | ✅ | `goldcycle.ps1`, README |
 
+| **Algo Trading switched on automatically** (a fresh MT5 copy has it OFF and refuses every order): after the connection test, `Enable-AlgoTrading` closes the bot's terminal, sets `[Experts] Enabled=1, Account=0, Profile=0` in its data folder's `config\common.ini` (UTF-16, found through `origin.txt`), and the bot starts the terminal again. Falls back to "click Algo Trading" if the data folder isn't found | ✅ real run: `algo trading allowed=True` with no click | `goldcycle.ps1` (`Stop-Terminal`, `Enable-AlgoTrading`) |
+
 Quality gates: **187/187 pytest**, mypy clean, ruff clean, `npm run build` clean.
+
+### REAL end-to-end run on this PC (user's demo account 474902598 @ Exness-MT5Trial15, typed as a client would)
+Fresh `git clone` in a scratch root, fresh MT5 copy, Manager `Install-All` with answers `2` / account number / `15` / password / dashboard password, **no stand-ins**:
+connected on the first try (balance 496.10 USD) → Algo Trading switched on by the script → bot READY → dashboard login OK, `dry_run=False`, symbol XAUUSDm, one MT5 window (the bot's own copy).
+**Then a real 0.01 BUY (Single, "Buy now") + Close trade through the bot's API, checked in MetaTrader's own records:** position #2852494912 BUY 0.01 XAUUSDm @ 3641.658, comment `GC|c=1.1|session=…`, magic = account magic+1; close deal OUT @ 3641.365, profit −0.29; bot journal `CLOSED`, pnl −0.29; 0 positions left. This is the "Exness has a record" check. Everything (tasks, shortcuts, MT5 copies, the typed password) was removed afterwards.
+
+#### Finding — ⚪/🟡 "Buy now" in the first seconds after the daily break
+Gold reopened 23:00 UTC; for ~3 s the broker answered `session closed (10044)` to orders while prices already streamed. The bot retried every second (correct), but the price had moved > 0.5 pt past the click price, so it fell back to "wait for a return to that price" (ARMED) and never filled (ADR-0003 behaviour, also applied to enter_now). A client pressing Buy-now at that moment sees an armed trade that doesn't open. Not changed; ask the client if Buy-now should ignore the slippage limit.
+Gold's daily break is 22:00–23:00 server time (= UTC), quotes freeze (tick age grows) until then.
 
 ### Simulation on this PC (client-like, separate root `…\scratchpad\clientsim\GoldCycle`, fresh `git clone`)
 - **A** `Install-All` with typos on purpose (kind `x`, login `abc`, server `zz zz`) → each re-asked; wrong password → "MetaTrader 5 refused the login …"; retry → same; cancel → **0 accounts, 0 tasks saved**. MT5's own answer was `Authorization failed (-6)` after 2 s, i.e. a fresh terminal copy reaches Exness and resolves `Exness-MT5Trial15`; only the credentials were refused. **This is what a wrong typed password/server looks like in MT5's Journal: "authorization … failed (Invalid account)".**
 - **B** success path (stand-in: base terminal that remembers the demo login, because no password is stored here): connected, files + logon task + desktop `.url`, bot READY, dashboard login 200, `dry_run=False`, balance read; menu: invalid `9` → asked again, restart / stop / start all via numbers, browser-open requested.
 - **C** wrong password in the account's `.env` → Start prints "running, but NOT connected … Reason: MT5 initialize failed: Terminal: Authorization failed (-6)"; `/health` and the dashboard status carry the same text.
-- **Not tested**: a successful login with a real typed password on a fresh copy (needs the client's/user's credentials; the user will try it), the red banner in a real browser.
+- ~~Not tested: a successful login with a real typed password on a fresh copy~~ → done in the REAL run above. **Still not tested**: the red "not connected" banner in a real browser; the one-liner `irm … | iex` from GitHub on a clean machine.
 
 ### ⚠️ NOT done yet — next session starts here
 0. Push the above, then on the VPS run the one-liner from README (it updates the existing install). Then try **Manager → 5 (add account)** with the real demo/real credentials on this PC (`$env:GOLDCYCLE_ROOT='D:\gc-test'` first, so it stays in its own folder).

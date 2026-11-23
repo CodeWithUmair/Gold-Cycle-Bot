@@ -61,7 +61,8 @@ cd backend
    It then **logs the bot's MetaTrader in and tells you the result before saving anything**: wrong number, password or
    server is explained in plain words and you can retry or retype. The dashboard opens only when it is connected.
 3. A second MetaTrader window opens: it is the bot's own MT5 (a clean copy, no charts and no other expert advisors).
-   Leave it open or minimize it. If it says so, click **Algo Trading** once (green): needed to send orders.
+   Leave it open or minimize it. **Algo Trading** (needed to send orders) is switched on for you; only if the setup
+   says it could not, click that button once so it turns green.
 
 Each account gets its own MT5 copy (`C:\GoldCycle\terminals\<name>`), settings, database and logs
 (`C:\GoldCycle\accounts\<name>`), and dashboard (`http://127.0.0.1:8001`, `8002`, …; desktop shortcut

@@ -239,7 +239,11 @@ Your usual MetaTrader 5 is not changed.
     $kind = if ($r.demo) { 'DEMO' } else { 'REAL' }
     Write-Host ("`nConnected: account #{0} on {1} ({2}), balance {3} {4}." -f $r.login, $r.server, $kind, $r.balance, $r.currency) -ForegroundColor Green
     if (-not $r.algo) {
-        Write-Host 'One thing left: in the bot''s MetaTrader window click the "Algo Trading" button at the top so it turns GREEN. Without it no orders can be sent.' -ForegroundColor Yellow
+        if (Enable-AlgoTrading $termExe) {
+            Write-Host 'Algo Trading was switched on for the bot''s MetaTrader (the bot needs it to send orders).' -ForegroundColor Green
+        } else {
+            Write-Host 'One thing left: in the bot''s MetaTrader window click the "Algo Trading" button at the top so it turns GREEN. Without it no orders can be sent.' -ForegroundColor Yellow
+        }
     }
 
     Push-Location (Join-Path $App 'backend')
@@ -294,17 +298,52 @@ function Stop-Tree([int]$ProcId) {
     foreach ($c in $children) { Stop-Tree $c.ProcessId }
 }
 
+function Stop-Terminal([string]$TerminalExe) {
+    # Closes that MetaTrader window politely (so it saves its settings), and forces it only if it does not close.
+    $procs = @(Get-Process terminal64 -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $TerminalExe })
+    foreach ($p in $procs) { [void]$p.CloseMainWindow() }
+    for ($i = 0; $i -lt 15 -and @($procs | Where-Object { -not $_.HasExited }).Count; $i++) { Start-Sleep -Seconds 1 }
+    foreach ($p in $procs) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+}
+
 function Stop-Mt5([string]$AccountName) {
     # Closes the account's own MT5 window (the terminal the bot started). Open trades stay on the broker.
     foreach ($a in @(Get-Accounts)) {
         if ($AccountName -and $a.Name -ne $AccountName) { continue }
         if (-not $a.Mt5Path) { continue }
-        $procs = @(Get-Process terminal64 -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $a.Mt5Path })
-        foreach ($p in $procs) { [void]$p.CloseMainWindow() }
-        for ($i = 0; $i -lt 10 -and @($procs | Where-Object { -not $_.HasExited }).Count; $i++) { Start-Sleep -Seconds 1 }
-        foreach ($p in $procs) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+        Stop-Terminal $a.Mt5Path
         Write-Host "  $($a.Name): MT5 closed"
     }
+}
+
+function Enable-AlgoTrading([string]$TerminalExe) {
+    # A fresh MetaTrader has "Algo Trading" OFF and refuses every order until someone clicks the button. Nobody should
+    # have to: switch it on in the terminal's settings file while the terminal is closed (it reads it at start).
+    # Returns $true when done. The bot starts the terminal again by itself.
+    $dir = (Split-Path $TerminalExe -Parent).TrimEnd('\')
+    $data = Get-ChildItem "$env:APPDATA\MetaQuotes\Terminal" -Directory -ErrorAction SilentlyContinue | Where-Object {
+        $o = Join-Path $_.FullName 'origin.txt'
+        (Test-Path $o) -and ((Get-Content $o -Raw).Trim().TrimEnd('\') -ieq $dir)
+    } | Select-Object -First 1
+    if (-not $data) { return $false }
+    $ini = Join-Path $data.FullName 'config\common.ini'
+    if (-not (Test-Path $ini)) { return $false }
+    Stop-Terminal $TerminalExe
+    $lines = New-Object System.Collections.ArrayList
+    $lines.AddRange(@([IO.File]::ReadAllText($ini) -split "\r?\n"))
+    $start = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\[Experts\]\s*$') { $start = $i; break } }
+    if ($start -lt 0) { [void]$lines.Add('[Experts]'); $start = $lines.Count - 1 }
+    # Account=0 / Profile=0: otherwise MetaTrader switches Algo Trading off again when the account or profile changes
+    foreach ($kv in @(@('Enabled', '1'), @('Account', '0'), @('Profile', '0'))) {
+        $end = $lines.Count
+        for ($i = $start + 1; $i -lt $lines.Count; $i++) { if ($lines[$i] -match '^\[') { $end = $i; break } }
+        $set = $false
+        for ($i = $start + 1; $i -lt $end; $i++) { if ($lines[$i] -match "^$($kv[0])=") { $lines[$i] = "$($kv[0])=$($kv[1])"; $set = $true } }
+        if (-not $set) { $lines.Insert($start + 1, "$($kv[0])=$($kv[1])") }
+    }
+    [IO.File]::WriteAllText($ini, ($lines -join "`r`n"), [Text.Encoding]::Unicode)   # MetaTrader writes UTF-16 with a BOM
+    return $true
 }
 
 function Restart-All([string]$AccountName) {
