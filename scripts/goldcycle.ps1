@@ -208,15 +208,17 @@ function Register-Account([string]$AccountName, [int]$Port) {
     [IO.File]::WriteAllText((Join-Path $desk "GoldCycle $AccountName.url"), "[InternetShortcut]`r`nURL=http://127.0.0.1:$Port/`r`n")
 }
 
-function Read-AccountDetails([object[]]$Existing) {
+function Read-AccountDetails([object[]]$Existing, [string]$FixedLogin = '') {
     # Only what is needed: kind of account, its number, the server number and the password.
     $kind = Read-Choice 'What kind of Exness account is this?' @('A real account (real money)', 'A demo account (practice money)')
     $word = if ($kind -eq 1) { 'Real' } else { 'Trial' }
-    while ($true) {
+    $login = $FixedLogin
+    while (-not $login) {
         $login = "$(Read-Host 'MT5 account number (digits only, as shown in your Exness account)')".Trim()
-        if ($login -notmatch '^\d{5,12}$') { Write-Host '  That does not look like an account number. Digits only, for example 474902598.' -ForegroundColor Yellow; continue }
-        if ($Existing | Where-Object { $_.Login -eq $login -or $_.Name -eq $login }) { Write-Host "  Account $login is already added." -ForegroundColor Yellow; continue }
-        break
+        if ($login -notmatch '^\d{5,12}$') { Write-Host '  That does not look like an account number. Digits only, for example 474902598.' -ForegroundColor Yellow; $login = ''; continue }
+        if ($Existing | Where-Object { $_.Login -eq $login -or $_.Name -eq $login }) {
+            Write-Host "  Account $login is already added. To correct its password or server, choose 8 in the menu." -ForegroundColor Yellow; $login = ''; continue
+        }
     }
     while ($true) {
         Write-Host "`nServer: the number at the end of your server name. Exness-MT5${word}8 -> type 8. No number at the end -> just press Enter."
@@ -226,7 +228,8 @@ function Read-AccountDetails([object[]]$Existing) {
         Write-Host '  Type only the number (for example 8), or press Enter.' -ForegroundColor Yellow
     }
     $password = Read-Plain "`nMT5 password (the TRADING password; typing is hidden)"
-    while ($true) {
+    $dash = ''
+    while (-not $FixedLogin) {
         $dash = Read-Plain 'Dashboard password: what you will type to open the bot page. Press Enter to use the MT5 password'
         if (-not $dash) { $dash = $password; break }
         if ($dash.Length -ge 8) { break }
@@ -284,6 +287,53 @@ Your usual MetaTrader 5 is not changed.
     if ((Get-BotHealth $port).connected) { Start-Process "http://127.0.0.1:$port/" }
 }
 
+function Select-OneAccount {
+    $list = @(Get-Accounts)
+    if ($list.Count -eq 0) { throw 'There is no account yet. Choose 5 to add one.' }
+    if ($list.Count -eq 1) { return $list[0] }
+    $c = Read-Choice 'Which account?' @($list | ForEach-Object { "$($_.Name)  ($($_.Server))" })
+    return $list[$c - 1]
+}
+
+function Set-EnvValue([string]$EnvFile, [string]$Key, [string]$Value) {
+    # Replaces (or adds) one KEY=value line. Line by line, not -replace: a password may contain $ and \ characters.
+    $lines = New-Object System.Collections.ArrayList
+    $lines.AddRange(@([IO.File]::ReadAllText($EnvFile) -split "\r?\n"))
+    $set = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match "^$Key=") { $lines[$i] = "$Key=$(Format-EnvValue $Value)"; $set = $true } }
+    if (-not $set) { [void]$lines.Add("$Key=$(Format-EnvValue $Value)") }
+    [IO.File]::WriteAllText($EnvFile, ($lines -join "`r`n"), $Utf8)
+}
+
+function Repair-AccountLogin {
+    # For an account that cannot log in (wrong password / server typed earlier, or an expired demo): ask again,
+    # test it for real, and only then save it and restart the bot.
+    $a = Select-OneAccount
+    Write-Host "`n=== Fix the MetaTrader login of account $($a.Login) ===" -ForegroundColor Cyan
+    $d = Read-AccountDetails @() $a.Login
+    Stop-Bot $a.Name
+    Stop-Terminal $a.Mt5Path
+    if (-not (Test-TerminalCopy $a.Mt5Path)) { Copy-Terminal (Find-BaseTerminal) (Split-Path $a.Mt5Path -Parent) }
+    while ($true) {
+        $r = Test-Mt5Connection $a.Mt5Path $d.Login $d.Password $d.Server
+        if ($r.ok) { break }
+        Write-Host "`nNot connected: $($r.hint)" -ForegroundColor Red
+        switch (Read-Choice 'What do you want to do?' @('Try again with the same details', 'Type the details again', 'Cancel (nothing is changed)')) {
+            2 { $d = Read-AccountDetails @() $a.Login }
+            3 { Write-Host 'Nothing was changed.'; Start-Bot $a.Name; return }
+        }
+    }
+    Write-Host ("`nConnected: account #{0} on {1} ({2}), balance {3} {4}." -f $r.login, $r.server, $(if ($r.demo) { 'DEMO' } else { 'REAL' }), $r.balance, $r.currency) -ForegroundColor Green
+    if (-not $r.algo) {
+        if (Enable-AlgoTrading $a.Mt5Path) { Write-Host 'Algo Trading was switched on for the bot''s MetaTrader.' -ForegroundColor Green }
+        else { Write-Host 'Click the "Algo Trading" button in the bot''s MetaTrader window so it turns GREEN.' -ForegroundColor Yellow }
+    }
+    Set-EnvValue $a.EnvFile 'MT5_PASSWORD' $d.Password
+    Set-EnvValue $a.EnvFile 'MT5_SERVER' $d.Server
+    Write-Host 'Saved. Starting the bot ...'
+    Start-Bot $a.Name
+}
+
 function Get-BotHealth([int]$Port) {
     try { return (Invoke-WebRequest "http://127.0.0.1:$Port/health" -UseBasicParsing -TimeoutSec 2).Content | ConvertFrom-Json } catch { return $null }
 }
@@ -303,7 +353,7 @@ function Start-Bot([string]$AccountName) {
             Write-Host "  $($a.Name): running, but NOT connected to MetaTrader 5 yet." -ForegroundColor Yellow
             if ($h.error) { Write-Host "    Reason: $($h.error)" -ForegroundColor Yellow }
             Write-Host "    If the bot's own MetaTrader 5 window opened, check it is logged in to account $($a.Login) (green bars at the bottom right)." -ForegroundColor Yellow
-            Write-Host "    If it did not open at all, choose 7 (Update): it rebuilds a broken MetaTrader copy." -ForegroundColor Yellow
+            Write-Host "    Wrong password or server? Choose 8 to type them again. MetaTrader did not open at all? Choose 7 (Update)." -ForegroundColor Yellow
         } else {
             Write-Host "  $($a.Name): the bot did not start. Details: $($a.Dir)\logs\console.log" -ForegroundColor Red
         }
@@ -479,6 +529,7 @@ function Show-Menu {
     5) Add another account
     6) Open the dashboard
     7) Update GoldCycle to the newest version
+    8) Fix an account's login (wrong password or server)
     0) Exit
 '@
         try {
@@ -493,6 +544,7 @@ function Show-Menu {
                     foreach ($a in @(Get-Accounts)) { if (-not $n -or $a.Name -eq $n) { Start-Process "http://127.0.0.1:$($a.Port)/" } }
                 }
                 '7' { Update-App }
+                '8' { Repair-AccountLogin }
                 '0' { return }
                 default { Write-Host 'Please type one of the numbers shown above.' -ForegroundColor Yellow }
             }
@@ -513,6 +565,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         'mode' { Switch-Mode $Name }
         'update' { Update-App }
         'repair' { Repair-Accounts }
+        'fix-login' { Repair-AccountLogin }
         'open' { Start-Process "http://127.0.0.1:$((@(Get-Accounts) | Where-Object Name -eq $Name).Port)/" }
         default { throw "Unknown command '$Command'. Use: install, add, list, start, stop, mode, update, open" }
     }

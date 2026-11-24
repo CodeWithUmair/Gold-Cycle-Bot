@@ -81,7 +81,8 @@ What the bot prints goes to `C:\GoldCycle\accounts\<name>\logs\console.log`.
 
 Everything else: double-click the **GoldCycle Manager** desktop shortcut. It shows the accounts and asks what to do:
 **1** start the bot (MT5 opens by itself) · **2** stop the bot · **3** stop the bot **and** MT5 · **4** restart
-everything · **5** add an account · **6** open the dashboard · **7** update.
+everything · **5** add an account · **6** open the dashboard · **7** update ·
+**8** fix an account's login (wrong password or server: it asks again, tests it, saves it and restarts the bot).
 No shortcut? Run `powershell -ExecutionPolicy Bypass -File C:\GoldCycle\app\scripts\goldcycle.ps1` (use the folder
 GoldCycle was installed in). `goldcycle.ps1 <command>` (`start`, `stop`, `stop-mt5`, `restart`, `update`, …) does the
 same from a terminal. Open trades stay on Exness with their TP/SL while the bot is stopped.
