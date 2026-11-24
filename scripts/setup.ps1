@@ -6,6 +6,20 @@
 # for the first MT5 account. Running it again is safe: it updates instead of reinstalling.
 # (Runs through `iex`: no param block, and no `exit`: that would close the window.)
 
+# A click inside a Windows console starts "Select" mode and PAUSES everything until Esc (the title then starts with
+# "Select"). The install takes minutes and people click; turn that off for this window. Best effort: if it cannot
+# be done the install simply runs as before.
+try {
+    Add-Type -Namespace GC -Name Con -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
+[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint mode);
+[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint mode);
+'@
+    $gcIn = [GC.Con]::GetStdHandle(-10)
+    $gcMode = [uint32]0
+    if ([GC.Con]::GetConsoleMode($gcIn, [ref]$gcMode)) { [void][GC.Con]::SetConsoleMode($gcIn, [uint32](($gcMode -band 0xFFFFFFBF) -bor 0x80)) }
+} catch { $null = $_ }
+
 function Install-GoldCycle {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is very slow with the progress bar on PS 5.1
