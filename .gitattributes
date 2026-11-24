@@ -1,1 +1,2 @@
-*.bat text eol=crlf
+# .bat files must keep Windows (CRLF) line endings exactly as committed: GitHub serves them byte for byte
+*.bat -text
