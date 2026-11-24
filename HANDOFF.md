@@ -1,6 +1,6 @@
 # HANDOFF — GoldCycle Project Log
 
-Read this first. It's the running history of the project: what exists, what happened in each
+Read [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md) first, then this. It's the running history of the project: what exists, what happened in each
 session, what was decided, and where the next session starts. Append a new session at the bottom
 (template at the end). Never rewrite old sessions; they are the history.
 
@@ -9,6 +9,7 @@ session, what was decided, and where the next session starts. Append a new sessi
 | | |
 |---|---|
 | **What** | Python bot for MetaTrader 5 (Exness, gold) that **executes** the trader's levels: opens at a trigger price, attaches TP/SL, and in Cycle mode chains the next trade automatically until SL / stop price / manual stop. It never picks direction. |
+| **Current direction (2026-11-25)** | **MetaTrader 5 Expert Advisor** in [mql5/](mql5/README.md) (the client wants the bot inside MT5). The Python bot below is kept. Status: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). |
 | **Spec (source of truth)** | [CLAUDE.md](CLAUDE.md). Rules, client's worked examples, open questions. |
 | **Stack** | FastAPI + asyncio engine + SQLite · official `MetaTrader5` package (Windows) · Vite/React/TS + Tailwind + lightweight-charts + framer-motion |
 | **Where it runs** | Client's Windows VPS, next to a logged-in MT5 terminal. Dashboard on `http://127.0.0.1:8000` via RDP only. |
@@ -18,7 +19,9 @@ session, what was decided, and where the next session starts. Append a new sessi
 
 | File | Use it for |
 |---|---|
-| [README.md](README.md) | Install, run, VPS deploy, troubleshooting |
+| [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md) | **Start here**: what works now, what is tested, what to do next, how to test on a new machine |
+| [mql5/README.md](mql5/README.md) | The Expert Advisor: install and use (for the trader), code map (for developers) |
+| [README.md](README.md) | Python bot: install, run, VPS deploy, troubleshooting |
 | [GLOSSARY.md](GLOSSARY.md) | Trading + MT5 terms (client "point" vs MT5 point, magic, filling, deal reason…) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Module map, threading, state machine internals, DB schema, REST + WS reference |
 | [docs/TESTING.md](docs/TESTING.md) | Test matrix vs spec §10, harness, live demo test procedure |
@@ -560,6 +563,56 @@ Setup/update no longer ends on a dead-end 'Finished' (client screenshot: update 
 
 ### Decisions made
 Hidden launcher + restart loop instead of QuickEdit-only fixes. No ADR.
+
+---
+
+## Session 8 — 2026-11-25 — the bot inside MetaTrader 5 (Expert Advisor)
+
+### State before
+Python bot installed and READY on a client laptop (Session 7). The client then said he does not want the web
+dashboard: he wants the bot **inside MT5**, like the two-file bot he had used before, with all the same settings,
+Cycle and Single. This replaces the "Python + dashboard" delivery decision in CLAUDE.md.
+
+### What was done
+| Item | Result | Files |
+|---|---|---|
+| One Expert Advisor with an on-chart panel; Cycle and Single side by side (magic 8800501 / 8800502) | ✅ compiles 0 errors / 0 warnings | `mql5/Experts`, `mql5/Include` |
+| Engine ported from `cycle_engine.py` (all client rules incl. order 2 at once, stop price, stop after cycle, live edit, kill switch, manual close, daily loss, duplicate guard, Resume after restart, TP/SL drag follow) | ✅ | `Engine.mqh`, `Logic.mqh` |
+| Panel: all dashboard settings, validation (typos never become "none"), preview, status, journal, log, chart lines, Pick, buttons, help, Ctrl+Shift+K; journal CSV; popup / sound / phone alerts | ✅ screenshot `mql5/docs/panel.png` | `Panel.mqh`, `GoldCycle.mq5` |
+| Simulated broker + engine test script run **inside MetaTrader** | ✅ **146 passed, 0 failed** | `SimBroker.mqh`, `Scripts/GoldCycle/GoldCycleTests.mq5` |
+| Live end-to-end test script (demo only) driving the EA's buttons through a test hook (`InpTestHooks`) | ✅ **40 checks passed** | `Scripts/GoldCycle/GoldCycleLiveTest.mq5` |
+| `mql5/build.ps1` (copy, compile, install into an MT5, refresh `release/GoldCycle.ex5`), client guide, status document for a new machine | ✅ build tested on a portable copy | `mql5/build.ps1`, `mql5/README.md`, `docs/CURRENT_STATE.md` |
+
+### Findings
+#### Finding #1 — ⚪ Test-only mistakes (engine was right)
+First run 144/145: the test expected a "touch" 0.2 pts above the level after a jump. A history-delay test also had to
+wait past the 3 s "just opened" guard.
+#### Finding #2 — ⚪ PowerShell variable case
+`$t` (loop target) overwrote `$T` (folder) in the first build script: variables ignore case.
+#### Finding #3 — 🟡 Small TP, seen live again
+Cycle BUY with TP 0.6: trigger 3555.75, filled 3556.291, TP 3556.35 (0.06 room). Planned-level rule; the panel warns.
+
+### Live / demo results
+Isolated portable MT5 copy, demo 474902598 @ Exness-MT5Trial15, XAUUSDm, 0.01 lot, 2026-11-24 23:43–23:55 UTC:
+Single (Buy now, Set TP/SL, TP changed outside the bot, Close) +0.52; Cycle BUY order 1 → Close all −2.17; one attempt
+never touched; Cycle SELL: order 1 TP +0.87 → **order 2 in 64 ms**, SL = order 1's entry; MetaTrader closed → server SL
+closed order 2 −1.12 → restart: "Resume?" → resolved from history → MAX_CYCLES; restart with a Single trade open →
+Resume reattached, no duplicate → Close all −0.51. Balance 495.81 → 493.40 (= sum). No position left open. The test
+copy and every file holding the password were deleted afterwards.
+
+### Files changed
+`mql5/**` (new), `docs/CURRENT_STATE.md` (new), `HANDOFF.md`, `CLAUDE.md`, `README.md`, `.gitattributes`.
+
+### ⚠️ NOT done yet — next session starts here
+See [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md) → "NOT tested yet": install on the office laptop, run the manual
+checklist (Apply changes, Stop after cycle, Stop now, Start at trigger, Pick, hotkey, timeframe switch were not
+exercised live), other screen scaling, VPS, client feedback on the panel.
+
+### Decisions made
+Deliver an MQL5 Expert Advisor (client request). One EA for both modes. Python bot kept, not removed. No ADR.
+
+### Open items (client)
+See the table at the end of CURRENT_STATE.md.
 
 ---
 

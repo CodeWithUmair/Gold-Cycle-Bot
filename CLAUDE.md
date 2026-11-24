@@ -1,5 +1,9 @@
 # CLAUDE.md — GoldCycle: MT5 Auto TP/SL Cycle Bot (XAUUSD)
 
+> **New session or new machine: read [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md) first, then HANDOFF.md.**
+> Since 2026-11-25 the delivery direction is the **MetaTrader 5 Expert Advisor in `mql5/`** (see §12); sections 6-9
+> describe the earlier Python + dashboard bot, which is kept. The trading rules (§2-§5) apply to both.
+>
 > Put this file at the repo root. It is the single source of truth for this project.
 > Read it fully before writing code. When something here is marked **OPEN QUESTION**, implement it as a config option with the stated default — do not block on it.
 
@@ -319,6 +323,9 @@ Confirmed:
 - (2026-11-21, critical) Order 2 opens at once on order 1's TP, ignoring max slippage / max spread / trading hours
   (§4.3). "Stop after this cycle" pressed during order 1 still opens order 2 and stops when order 2 closes.
 - (2026-11-18) Cycle and Single are separate bots and can run at the same time: two engines, Single uses `magic + 1`. "One trade at a time" (§2) is per bot.
+- (2026-11-25) Client wants the bot **inside MT5**: one Expert Advisor (`mql5/`) with an on-chart panel for Cycle and
+  Single, same rules and settings. Rules changed in either implementation must be changed in both (or the Python one
+  explicitly retired). MQL5 coding: engine depends only on `CBroker`; `OrderSend` only in `Broker.mqh`.
 
 ---
 

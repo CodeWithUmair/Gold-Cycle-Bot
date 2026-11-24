@@ -1,5 +1,8 @@
 # GoldCycle — MT5 auto TP/SL cycle bot (XAUUSD)
 
+> **MetaTrader version (current):** the bot as an Expert Advisor inside MT5 is in [mql5/](mql5/README.md).
+> Current status and how to test: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Below: the Python bot with the web dashboard.
+
 GoldCycle executes the trader's plan on MetaTrader 5 (Exness, gold). The trader chooses the level and direction. The bot waits for price to touch that level, then opens the trade with TP and SL set server-side. In **Cycle** mode, each TP starts the next trade along the ladder until the SL is hit, the stop price is reached, or the trader stops it. The bot never picks a direction itself.
 
 The exact trading rules are in [CLAUDE.md](CLAUDE.md) §4, and that file is the source of truth.
