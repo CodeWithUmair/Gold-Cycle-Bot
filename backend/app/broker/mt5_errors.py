@@ -17,7 +17,10 @@ _BY_CODE: dict[int, str] = {
     -3: "MetaTrader 5 could not be started from the copied folder. Close every MetaTrader 5 window and try again.",
     -6: _AUTH,
     -10001: _NO_ANSWER,
-    -10003: "MetaTrader 5 could not be started. Close every MetaTrader 5 window and try again.",
+    -10003: (
+        "MetaTrader 5 could not be started from the bot's own copy. The copy may be missing, incomplete or blocked "
+        "by an antivirus. In the GoldCycle Manager choose 7 (Update): it rebuilds a broken copy."
+    ),
     -10005: _NO_ANSWER,
 }
 

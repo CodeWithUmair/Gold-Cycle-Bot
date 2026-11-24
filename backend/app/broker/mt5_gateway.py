@@ -21,6 +21,7 @@ from app.broker.base import (
     SymbolSpec,
     Tick,
 )
+from app.broker.mt5_errors import explain
 from app.config import Settings
 from app.engine.models import Direction
 
@@ -78,7 +79,7 @@ class Mt5Gateway:
                 kwargs["password"] = self._s.mt5_password.get_secret_value()
         if not mt5.initialize(**kwargs):
             code, msg = mt5.last_error()
-            raise BrokerDisconnected(f"MT5 initialize failed: {msg} ({code})")
+            raise BrokerDisconnected(f"MT5 initialize failed: {msg} ({code}). {explain(code, msg)}")
         acc = mt5.account_info()
         log.info("MT5 connected: login=%s server=%s", getattr(acc, "login", "?"), getattr(acc, "server", "?"))
 

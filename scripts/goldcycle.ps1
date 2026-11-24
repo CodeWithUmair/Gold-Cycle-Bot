@@ -100,17 +100,37 @@ function Find-BaseTerminal {
     return $found[$n - 1].FullName
 }
 
+function Test-TerminalCopy([string]$Exe) {
+    # A usable terminal64.exe is several MB; a missing or empty one means the copy is broken.
+    return ((Test-Path $Exe) -and ((Get-Item $Exe).Length -gt 1MB))
+}
+
+function Copy-Terminal([string]$Base, [string]$Dest) {
+    # robocopy, not Copy-Item: Copy-Item puts the folder INSIDE $Dest when $Dest already exists (a half-finished
+    # earlier attempt), so terminal64.exe never lands where the bot looks for it. robocopy also retries locked files.
+    New-Item -ItemType Directory -Force $Dest | Out-Null
+    $nested = Join-Path $Dest (Split-Path $Base -Leaf)   # leftover of that nesting mistake from an older version
+    if (Test-Path (Join-Path $nested 'terminal64.exe')) { Remove-Item $nested -Recurse -Force }
+    & robocopy.exe $Base $Dest /E /R:3 /W:2 /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) {
+        throw "Copying MetaTrader 5 failed (robocopy code $LASTEXITCODE). Close every MetaTrader 5 window, make sure the disk has free space, and try again."
+    }
+    $global:LASTEXITCODE = 0   # robocopy answers 1 for "files copied": that is success, not an error code to leak out
+    if (-not (Test-TerminalCopy (Join-Path $Dest 'terminal64.exe'))) {
+        throw "The MetaTrader 5 copy is incomplete (terminal64.exe is missing in $Dest). An antivirus may have removed it: allow the folder $Root in it and try again."
+    }
+}
+
 function New-TerminalCopy([string]$AccountName) {
     # The bot gets its OWN copy of MetaTrader 5: a clean terminal with no charts and no expert advisors, so nothing
     # else can trade the account. Returns the path of its terminal64.exe.
     $term = Join-Path $Root "terminals\$AccountName"
-    if (-not (Test-Path (Join-Path $term 'terminal64.exe'))) {
-        $base = Find-BaseTerminal
+    $exe = Join-Path $term 'terminal64.exe'
+    if (-not (Test-TerminalCopy $exe)) {
         Write-Host "Copying MetaTrader 5 to $term ..."
-        New-Item -ItemType Directory -Force (Split-Path $term) | Out-Null
-        Copy-Item $base $term -Recurse -Force
+        Copy-Terminal (Find-BaseTerminal) $term
     }
-    return (Join-Path $term 'terminal64.exe')
+    return $exe
 }
 
 function Test-Mt5Connection([string]$TerminalExe, [string]$Login, [string]$Password, [string]$Server) {
@@ -282,7 +302,8 @@ function Start-Bot([string]$AccountName) {
         } elseif ($h) {
             Write-Host "  $($a.Name): running, but NOT connected to MetaTrader 5 yet." -ForegroundColor Yellow
             if ($h.error) { Write-Host "    Reason: $($h.error)" -ForegroundColor Yellow }
-            Write-Host "    Look at the bot's own MetaTrader 5 window: is it logged in to account $($a.Login) (green bars at the bottom right)?" -ForegroundColor Yellow
+            Write-Host "    If the bot's own MetaTrader 5 window opened, check it is logged in to account $($a.Login) (green bars at the bottom right)." -ForegroundColor Yellow
+            Write-Host "    If it did not open at all, choose 7 (Update): it rebuilds a broken MetaTrader copy." -ForegroundColor Yellow
         } else {
             Write-Host "  $($a.Name): the bot did not start. Details: $($a.Dir)\logs\console.log" -ForegroundColor Red
         }
@@ -372,6 +393,13 @@ function Repair-Accounts {
     # version gets the hidden, self-restarting launcher), and removes tasks left by older versions.
     foreach ($a in @(Get-Accounts)) {
         New-Item -ItemType Directory -Force (Join-Path $a.Dir 'logs') | Out-Null
+        # The bot's own MetaTrader copy (made by this Manager) is missing or broken: build it again, so "Update" repairs it
+        if ($a.Mt5Path -and ($a.Mt5Path -like "$Root\terminals\*") -and -not (Test-TerminalCopy $a.Mt5Path)) {
+            Write-Host "  $($a.Name): the bot's MetaTrader 5 copy is missing or incomplete. Rebuilding it ..." -ForegroundColor Yellow
+            Stop-Terminal $a.Mt5Path
+            Copy-Terminal (Find-BaseTerminal) (Split-Path $a.Mt5Path -Parent)
+            Write-Host "  $($a.Name): MetaTrader 5 copy rebuilt" -ForegroundColor Green
+        }
         Write-Launchers $a.Name $a.Port
         Register-Account $a.Name $a.Port
         Write-Host "  $($a.Name): launcher updated (runs hidden, restarts itself if it crashes)"
