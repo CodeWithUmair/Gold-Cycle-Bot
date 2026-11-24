@@ -545,6 +545,8 @@ Leftovers seen on this PC after the user's own cleanup: tasks `GoldCycle-4730279
 
 Start-Bot now ASKS when the saved login is refused (-6 / Authorization failed): `Type the password and server of account N again now? 1) Yes 2) No` and runs `Repair-AccountLogin` on yes (`-NoOffer` stops it asking again after the fix or a cancel). Verified with both answers on this PC (wrong saved password -> No: unchanged; Yes: fixed, READY).
 
+Setup/update no longer ends on a dead-end 'Finished' (client screenshot: update ran, bot was stopped, nothing told him to start it): `setup.ps1` now opens the Manager menu right after install/update, and `Set-ManagerShortcut` makes sure the 'GoldCycle Manager' icon exists (refreshes an existing one, otherwise creates it on the SHARED Desktop so every Windows user sees it; Update calls it too). Tested the icon helper in temp folders (not run end to end on a client PC).
+
 ### ⚠️ NOT done yet — next session starts here
 0. Push the above, then on the VPS run the one-liner from README (it updates the existing install). Then try **Manager → 5 (add account)** with the real demo/real credentials on this PC (`$env:GOLDCYCLE_ROOT='D:\gc-test'` first, so it stays in its own folder).
 1. **Update the VPS once** (the old Manager script doesn't know `repair`): in an admin PowerShell,

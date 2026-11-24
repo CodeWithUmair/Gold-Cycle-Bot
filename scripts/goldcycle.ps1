@@ -498,7 +498,27 @@ function Update-App {
     Install-App
     Repair-Accounts
     foreach ($n in $running) { Start-Bot $n }
+    Set-ManagerShortcut
     Write-Host 'Updated. Open dashboard pages reconnect by themselves.' -ForegroundColor Green
+}
+
+function Set-ManagerShortcut([string[]]$Folders = @()) {
+    # The "GoldCycle Manager" icon. An existing one (on this user's Desktop or the shared one) is pointed at this
+    # install; if there is none it is created on the SHARED Desktop, which every Windows user sees: the Administrator
+    # window used for the install is not always the user who looks at the screen.
+    if (-not $Folders) { $Folders = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory')) }
+    $name = 'GoldCycle Manager.lnk'
+    $paths = @($Folders | ForEach-Object { Join-Path $_ $name } | Where-Object { Test-Path $_ })
+    if (-not $paths) { $paths = @(Join-Path $Folders[-1] $name) }
+    foreach ($p in $paths) {
+        try {
+            $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut($p)
+            $lnk.TargetPath = (Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe")
+            $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+            $lnk.Save()
+            Write-Host "Desktop icon `"GoldCycle Manager`" is ready ($p)." -ForegroundColor Green
+        } catch { Write-Host "Could not create the Desktop icon ($p): $($_.Exception.Message)" -ForegroundColor Yellow }
+    }
 }
 
 function Install-All {
@@ -510,12 +530,7 @@ function Install-All {
         Write-Host 'An older GoldCycle auto-start was found and turned off, so two bots never trade one account.' -ForegroundColor Yellow
         Write-Host 'If its window is still open, close it.' -ForegroundColor Yellow
     }
-    $desk = [Environment]::GetFolderPath('Desktop')
-    $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desk 'GoldCycle Manager.lnk'))
-    $lnk.TargetPath = 'powershell.exe'
-    $lnk.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
-    $lnk.Save()
-    Write-Host 'Desktop shortcut "GoldCycle Manager" created.' -ForegroundColor Green
+    Set-ManagerShortcut
     if (@(Get-Accounts).Count -eq 0) { Add-Account }
 }
 

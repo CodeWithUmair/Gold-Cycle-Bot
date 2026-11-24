@@ -83,6 +83,11 @@ function Install-GoldCycle {
     $mode = if ($existing) { 'update' } else { 'install' }
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $app 'scripts\goldcycle.ps1') $mode
     if ($LASTEXITCODE -ne 0) { throw 'The GoldCycle Manager stopped with an error (see the message above).' }
+
+    # Do not end on "Finished": show the menu now (start / stop / restart / add account / fix a login ...).
+    Write-Host ''
+    Write-Host 'Opening the GoldCycle Manager menu ...' -ForegroundColor Cyan
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $app 'scripts\goldcycle.ps1')
 }
 
 try { Install-GoldCycle } catch {
