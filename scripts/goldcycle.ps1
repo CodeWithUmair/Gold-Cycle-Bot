@@ -305,10 +305,10 @@ function Set-EnvValue([string]$EnvFile, [string]$Key, [string]$Value) {
     [IO.File]::WriteAllText($EnvFile, ($lines -join "`r`n"), $Utf8)
 }
 
-function Repair-AccountLogin {
+function Repair-AccountLogin([object]$Account = $null) {
     # For an account that cannot log in (wrong password / server typed earlier, or an expired demo): ask again,
     # test it for real, and only then save it and restart the bot.
-    $a = Select-OneAccount
+    $a = if ($Account) { $Account } else { Select-OneAccount }
     Write-Host "`n=== Fix the MetaTrader login of account $($a.Login) ===" -ForegroundColor Cyan
     $d = Read-AccountDetails @() $a.Login
     Stop-Bot $a.Name
@@ -320,7 +320,7 @@ function Repair-AccountLogin {
         Write-Host "`nNot connected: $($r.hint)" -ForegroundColor Red
         switch (Read-Choice 'What do you want to do?' @('Try again with the same details', 'Type the details again', 'Cancel (nothing is changed)')) {
             2 { $d = Read-AccountDetails @() $a.Login }
-            3 { Write-Host 'Nothing was changed.'; Start-Bot $a.Name; return }
+            3 { Write-Host 'Nothing was changed.'; Start-Bot $a.Name -NoOffer; return }
         }
     }
     Write-Host ("`nConnected: account #{0} on {1} ({2}), balance {3} {4}." -f $r.login, $r.server, $(if ($r.demo) { 'DEMO' } else { 'REAL' }), $r.balance, $r.currency) -ForegroundColor Green
@@ -331,14 +331,14 @@ function Repair-AccountLogin {
     Set-EnvValue $a.EnvFile 'MT5_PASSWORD' $d.Password
     Set-EnvValue $a.EnvFile 'MT5_SERVER' $d.Server
     Write-Host 'Saved. Starting the bot ...'
-    Start-Bot $a.Name
+    Start-Bot $a.Name -NoOffer
 }
 
 function Get-BotHealth([int]$Port) {
     try { return (Invoke-WebRequest "http://127.0.0.1:$Port/health" -UseBasicParsing -TimeoutSec 2).Content | ConvertFrom-Json } catch { return $null }
 }
 
-function Start-Bot([string]$AccountName) {
+function Start-Bot([string]$AccountName, [switch]$NoOffer) {
     foreach ($a in @(Get-Accounts)) {
         if ($AccountName -and $a.Name -ne $AccountName) { continue }
         if ($a.Running) { Write-Host "  $($a.Name): already running"; continue }
@@ -354,6 +354,10 @@ function Start-Bot([string]$AccountName) {
             if ($h.error) { Write-Host "    Reason: $($h.error)" -ForegroundColor Yellow }
             Write-Host "    If the bot's own MetaTrader 5 window opened, check it is logged in to account $($a.Login) (green bars at the bottom right)." -ForegroundColor Yellow
             Write-Host "    Wrong password or server? Choose 8 to type them again. MetaTrader did not open at all? Choose 7 (Update)." -ForegroundColor Yellow
+            # The saved login is refused: do not leave him with a message, ask for the details right now.
+            if (-not $NoOffer -and "$($h.error)" -match '\(-6\)|Authorization failed') {
+                if ((Read-Choice "Type the password and server of account $($a.Login) again now?" @('Yes', 'No')) -eq 1) { Repair-AccountLogin $a }
+            }
         } else {
             Write-Host "  $($a.Name): the bot did not start. Details: $($a.Dir)\logs\console.log" -ForegroundColor Red
         }
