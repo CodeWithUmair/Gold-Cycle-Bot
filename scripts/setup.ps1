@@ -82,6 +82,10 @@ function Install-GoldCycle {
 
     $mode = if ($existing) { 'update' } else { 'install' }
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $app 'scripts\goldcycle.ps1') $mode
+    if ($LASTEXITCODE -ne 0) { throw 'The GoldCycle Manager stopped with an error (see the message above).' }
 }
 
-try { Install-GoldCycle } catch { Write-Host "`nSETUP STOPPED: $($_.Exception.Message)" -ForegroundColor Red }
+try { Install-GoldCycle } catch {
+    Write-Host "`nSETUP STOPPED: $($_.Exception.Message)" -ForegroundColor Red
+    if ($PSCommandPath) { exit 1 }   # run as a file (GoldCycle-Setup.bat): report the failure. Under `iex` there is no path and the window must stay open.
+}
