@@ -118,6 +118,8 @@ class CycleConfig(BaseModel):
             self.trading_hours = self.trading_hours.strip() or None
         if self.trading_hours is not None and not _HOURS_RE.match(self.trading_hours):
             raise ValueError("trading_hours must look like 08:00-17:30")
+        if self.trading_hours is not None and self.trading_hours[:5] == self.trading_hours[6:]:
+            raise ValueError("trading_hours: start and end can't be the same (the bot would never trade)")
         return self
 
     # Narrowed accessor: CYCLE always has a TP (validated above). SINGLE code paths use tp_points (may be None).

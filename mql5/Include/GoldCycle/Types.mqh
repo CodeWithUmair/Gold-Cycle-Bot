@@ -10,7 +10,8 @@
 #define GC_EPS 1e-9
 #define GC_ORDER_RETRY_MS 1000   // min gap between order attempts while OPENING
 #define GC_RESOLVE_TIMEOUT_MS 10000   // wait this long for the closing deal to show up in history
-#define GC_ALERT_THROTTLE_MS 5000
+#define GC_WARN_REPEAT_MS 10000    // the same problem is logged again at most this often
+#define GC_POPUP_REPEAT_MS 60000   // and pops up again at most this often
 
 enum ENUM_GC_DIR { GC_BUY = 0, GC_SELL = 1 };
 enum ENUM_GC_MODE { GC_CYCLE = 0, GC_SINGLE = 1 };

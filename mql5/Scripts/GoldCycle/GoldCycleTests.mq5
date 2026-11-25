@@ -7,6 +7,7 @@
 #property version   "1.00"
 #include <GoldCycle\Engine.mqh>
 #include <GoldCycle\SimBroker.mqh>
+#include <GoldCycle\Panel.mqh>
 
 class CTestSink : public CGcSink
   {
@@ -14,8 +15,14 @@ public:
    int               block;
    string            last;
    int               closedRows;
-                     CTestSink() { block = -1; last = ""; closedRows = 0; }
-   virtual void      Event(const string level, const string msg, const bool toast) override { last = msg; }
+   int               popups;          // pop-up alerts the trader would see for problems
+   int               lines;           // log lines
+                     CTestSink() { block = -1; last = ""; closedRows = 0; popups = 0; lines = 0; }
+   virtual void      Event(const string level, const string msg, const bool toast) override
+     {
+      last = msg; lines++;
+      if(toast && level == "error") popups++;
+     }
    virtual void      Closed(const SRow &row, const int mode, const string session) override { closedRows++; }
    virtual int       BlockDay() override { return block; }
    virtual void      SetBlockDay(const int d) override { block = d; }
@@ -590,6 +597,395 @@ void TestRestart()
    Check(e.state == GCS_IDLE && !e.resumable, "stays idle");
   }
 
+//================================================================ edge cases
+int Index(const ulong ticket)
+  {
+   for(int i = 0; i < ArraySize(sim.open); i++)
+      if(sim.open[i].ticket == ticket)
+         return i;
+   return -1;
+  }
+
+//--- BUY cycle whose order 2 was rejected once: the bot is OPENING order 2
+void Order2Pending()
+  {
+   OpenBuyCycle();
+   sim.rejectOpens = 1;
+   Move(4005);
+  }
+
+void TestEdges()
+  {
+   string err = "";
+
+   Fresh("restart while order 2 is still being opened: opens at once, never waits for a touch", 3999);
+   Order2Pending();
+   Check(e.state == GCS_OPENING && e.leg == 2, "precondition: opening order 2");
+   e = Reload(false);
+   Check(e.Resume(err), "resume");
+   Check(e.state == GCS_OPENING, "still opening, not 'waiting for price' (state " + GcStateName(e.state) + ")");
+   Move(4009);
+   Check(sim.opens == 2 && e.state == GCS_IN_POSITION && Near(e.cur_sl, 4000), "order 2 opened far from the TP price");
+
+   Fresh("timeframe switch while order 2 is still being opened", 3999);
+   Order2Pending();
+   e = Reload(true);
+   Move(4009);
+   Check(sim.opens == 2 && e.state == GCS_IN_POSITION, "order 2 opened after the automatic resume");
+
+   Fresh("crash after order 1 was sent, before it was saved", 3999);
+   Arm(Cfg(GC_CYCLE, GC_BUY, 4000, 3));
+   string armed[];
+   e.Serialize(armed);
+   Move(4000);
+   CEngine *n = new CEngine();
+   n.Init(sim, sink, GC_CYCLE, 100, 101);
+   n.Deserialize(armed); n.Recover(false);
+   Check(n.Resume(err) && n.state == GCS_IN_POSITION && sim.opens == 1, "attached to the trade, no second order");
+   delete e; e = n;
+
+   Fresh("crash after order 2 was sent, before it was saved", 3999);
+   OpenBuyCycle();
+   string inpos[];
+   e.Serialize(inpos);
+   Move(4003.1);
+   n = new CEngine();
+   n.Init(sim, sink, GC_CYCLE, 100, 101);
+   n.Deserialize(inpos); n.Recover(false);
+   n.Resume(err); sim.ms += 1100; n.Step();
+   Check(sim.opens == 2 && ArraySize(sim.open) == 1 && n.state == GCS_IN_POSITION && n.leg == 2, "order 1 read from history, order 2 attached, no duplicate");
+   delete e; e = n;
+
+   Fresh("restart while a close is still being retried", 3999);
+   SConfig s = Cfg(GC_CYCLE, GC_BUY, 4000, 3); s.stop_price = 3995;
+   Arm(s); Move(4000);
+   sim.rejectCloses = 2;
+   Move(3994);
+   e = Reload(false);
+   e.Resume(err); Wait(); Wait(); Wait();
+   Check(ArraySize(sim.open) == 0 && e.state == GCS_STOPPED && e.stop_reason == "STOP_PRICE", "close finished after the restart");
+
+   Fresh("daily loss hit by Single stops the Cycle bot too (it waits for a trigger)", 3999);
+   CEngine *one = new CEngine();
+   one.Init(sim, sink, GC_SINGLE, 101, 100);
+   Arm(Cfg(GC_CYCLE, GC_BUY, 4010, 3));
+   SConfig c = Cfg(GC_SINGLE, GC_BUY, 4001, 0); c.daily_loss = 2;
+   one.Arm(c, err); sim.Price(4001); one.Step(); e.Step();
+   sim.Price(3997); one.Step(); sim.ms += 1100; one.Step(); e.Step();
+   Check(one.state == GCS_STOPPED && one.stop_reason == "DAILY_LOSS", "single stopped");
+   Check(e.state == GCS_STOPPED && e.stop_reason == "DAILY_LOSS", "cycle stopped as well (" + GcStateName(e.state) + ")");
+   Move(4010);
+   Check(ArraySize(sim.open) == 0, "no new trade today");
+   delete one;
+
+   Fresh("daily loss hit by Single closes the Cycle bot's open trade", 3999);
+   one = new CEngine();
+   one.Init(sim, sink, GC_SINGLE, 101, 100);
+   Arm(Cfg(GC_CYCLE, GC_BUY, 4000, 30));
+   c = Cfg(GC_SINGLE, GC_BUY, 4000, 0); c.daily_loss = 2;
+   one.Arm(c, err); sim.Price(4000); e.Step(); one.Step();
+   sim.Price(3997); one.Step(); e.Step(); sim.ms += 1100; one.Step(); e.Step(); sim.ms += 1100; e.Step();
+   Check(ArraySize(sim.open) == 0 && e.state == GCS_STOPPED && e.stop_reason == "DAILY_LOSS", "stop all (" + GcStateName(e.state) + ")");
+   delete one;
+
+   Fresh("no order 2 once the daily loss limit is hit", 3999);
+   OpenBuyCycle();
+   sink.SetBlockDay(sim.day);
+   sim.Price(4003.1); e.Step(); sim.ms += 1100; e.Step(); sim.ms += 1100; e.Step();
+   Check(sim.opens == 1 && e.state == GCS_STOPPED && e.stop_reason == "DAILY_LOSS", "stopped without order 2");
+
+   Fresh("close all while an order is being retried", 3999);
+   sim.rejectOpens = 100;
+   OpenBuyCycle();
+   e.CloseAllAndStop();
+   sim.rejectOpens = 0; Wait(); Wait();
+   Check(e.state == GCS_STOPPED && sim.opens == 0, "no order after the kill switch");
+
+   Fresh("close all while reading order 1's result", 3999);
+   OpenBuyCycle();
+   sim.hideHistory = true;
+   Move(4003.1); Wait(3000);
+   e.CloseAllAndStop();
+   sim.hideHistory = false; Wait(); Wait();
+   Check(sim.opens == 1 && e.state == GCS_STOPPED && e.stop_reason == "KILL_SWITCH", "no order 2");
+
+   Fresh("Stop now while an order is being retried", 3999);
+   sim.rejectOpens = 100;
+   OpenBuyCycle();
+   Check(e.StopNow(err), "accepted");
+   sim.rejectOpens = 0; Wait(); Wait();
+   Check(sim.opens == 0 && e.state == GCS_STOPPED, "nothing opens later");
+
+   Fresh("stop price reached while order 2 is being retried", 3999);
+   s = Cfg(GC_CYCLE, GC_BUY, 4000, 3); s.stop_price = 4010;
+   Arm(s); Move(4000);
+   sim.rejectOpens = 100;
+   Move(4003.1);
+   sim.rejectOpens = 0; sim.Price(4011); e.Step(); Wait();
+   Check(sim.opens == 1 && e.state == GCS_STOPPED && e.stop_reason == "STOP_PRICE", "stopped, order 2 not opened");
+
+   Fresh("stop after cycle pressed during order 2", 3999);
+   OpenBuyCycle(); Move(4003.1);
+   e.StopAfterCycle(err); Move(3999.9);
+   Check(e.state == GCS_STOPPED && e.stop_reason == "STOP_AFTER_CYCLE" && sim.opens == 2, "stops when order 2 closes");
+
+   Fresh("trader adds a TP on order 2 and it hits", 3999);
+   OpenBuyCycle(2); Move(4003.1);
+   sim.Drag(e.pos.ticket, 4000, 4008); Wait();
+   Move(4008.1);
+   Check(e.state == GCS_ARMED && e.cycle_no == 2 && Near(e.planned, 4002), "cycle over, next at entry + gap");
+
+   Fresh("trader adds an SL on order 1 and it hits", 3999);
+   OpenBuyCycle(2);
+   sim.Drag(e.pos.ticket, 3998, 4003); Wait();
+   Move(3997.9);
+   Check(e.state == GCS_ARMED && e.cycle_no == 2 && e.leg == 1 && Near(e.planned, 4002) && sim.opens == 1, "next cycle at entry + gap, no order 2");
+
+   Fresh("broker stop-out", 3999);
+   OpenBuyCycle();
+   sim.CloseAt(Index(e.pos.ticket), DL_STOP_OUT, 3990); Wait();
+   Check(e.state == GCS_STOPPED && e.stop_reason == "STOP_OUT" && sim.opens == 1, "stops");
+
+   Fresh("closed by another program at the TP price", 3999);
+   OpenBuyCycle();
+   sim.CloseAt(Index(e.pos.ticket), DL_EXPERT, 4003); Wait();
+   Check(sim.opens == 2, "treated as TP");
+
+   Fresh("closed by another program elsewhere", 3999);
+   OpenBuyCycle();
+   sim.CloseAt(Index(e.pos.ticket), DL_EXPERT, 3980); Wait();
+   Check(e.state == GCS_STOPPED && e.stop_reason == "UNKNOWN" && sim.opens == 1, "stops, never guesses");
+
+   Fresh("TP hit while disconnected", 3999);
+   OpenBuyCycle();
+   sim.online = false; e.Step();
+   sim.Price(4004);
+   e.Step();
+   Check(sim.opens == 1, "paused");
+   sim.online = true; Wait();
+   Check(sim.opens == 2 && e.leg == 2 && Near(e.cur_sl, 4000), "order 2 right after reconnecting");
+
+   Fresh("trader closes part of the trade", 3999);
+   SConfig big = Cfg(GC_CYCLE, GC_BUY, 4000, 3); big.lot = 0.1;
+   Arm(big); Move(4000);
+   sim.open[0].volume = 0.05; Wait();
+   Check(e.state == GCS_IN_POSITION && sim.opens == 1, "keeps tracking the rest, no new order");
+
+   Fresh("rejections do not flood the screen with pop-ups", 3999);
+   sim.rejectOpens = 1000;
+   OpenBuyCycle();
+   int lines = sink.lines;
+   for(int i = 0; i < 30; i++) Wait(1000);
+   Check(sink.popups <= 2, "pop-ups in 30 s: " + IntegerToString(sink.popups));
+   Check(sink.lines - lines <= 8, "log lines in 30 s: " + IntegerToString(sink.lines - lines));
+   Check(e.state == GCS_OPENING, "still retrying");
+   sim.rejectOpens = 0; Wait();
+   Check(sim.opens == 1, "and it fills when the broker accepts");
+
+   Fresh("lower max cycles while running", 3999);
+   OpenBuyCycle(); Move(4003.1); Move(3999.9); Move(4001); Move(4000);
+   Check(e.cycle_no == 2 && e.state == GCS_IN_POSITION, "in cycle 2");
+   SConfig low = e.cfg; low.max_cycles = 1;
+   Check(e.UpdateConfig(low, err), "accepted");
+   Move(4003.1); Move(3999.9);
+   Check(e.state == GCS_STOPPED && e.stop_reason == "MAX_CYCLES", "stops after this cycle");
+
+   Fresh("more orders than the journal keeps", 3999);
+   OpenBuyCycle();
+   for(int i = 0; i < 25; i++) { Move(4003.1); Move(3999.9); Move(4001); Move(4000); }
+   Check(ArraySize(e.rows) == 40 && sim.opens == 51, "40 rows kept, " + IntegerToString(sim.opens) + " orders");
+   e = Reload(false);
+   e.Resume(err);
+   Move(4003.1);
+   Check(e.rows[ArraySize(e.rows) - 2].reason == CR_TP && sim.opens == 52, "the right row is updated after a restart");
+
+   Fresh("damaged state file", 3999);
+   string junk[] = {"hello", "state", "=5", "row=1|2|3"};
+   Check(!e.Deserialize(junk) && e.state == GCS_IDLE && !e.hasCfg, "ignored");
+
+   Fresh("Start pressed just after a left-open trade closed", 3999);
+   OpenBuyCycle(); e.StopNow(err);
+   sim.Price(4003.1);
+   int before = sink.closedRows;
+   Check(e.Arm(Cfg(GC_CYCLE, GC_BUY, 4010, 3), err), "new session accepted");
+   Check(sink.closedRows == before + 1, "the old trade is still written to the journal file");
+
+   Fresh("arm while disconnected", 3999);
+   sim.online = false;
+   Check(!e.Arm(Cfg(GC_CYCLE, GC_BUY, 4000, 3), err) && e.state == GCS_IDLE, "refused");
+
+   Fresh("SELL stop above the trigger", 4001);
+   s = Cfg(GC_CYCLE, GC_SELL, 4000, 3); s.stop_price = 4006;
+   Arm(s); Move(4000);
+   Move(4005.8);
+   Wait();
+   Check(ArraySize(sim.open) == 0 && e.stop_reason == "STOP_PRICE", "measured on the ask (4006.0)");
+
+   Fresh("trigger on ask", 3999);
+   s = Cfg(GC_CYCLE, GC_BUY, 4000, 3); s.trigger_side = SIDE_ASK;
+   Arm(s); Move(3999.8, 0.2);
+   Check(sim.opens == 1, "ask 4000.0 touches");
+
+   Fresh("max slippage 0 needs the exact price", 3999);
+   s = Cfg(GC_CYCLE, GC_BUY, 4000, 3); s.max_slippage = 0;
+   Arm(s); Move(4000.3);
+   Check(sim.opens == 0, "0.3 past is refused");
+   Move(4000);
+   Check(sim.opens == 1, "exact touch opens");
+
+   Fresh("trading hours open the window later", 3999);
+   s = Cfg(GC_CYCLE, GC_BUY, 4000, 3); s.hours = "12:00-13:00"; sim.localMin = 600;
+   Arm(s); Move(4000);
+   Check(sim.opens == 0 && StringFind(e.waiting, "hours") >= 0, "waits");
+   sim.localMin = 720; Move(4000.1);
+   Check(sim.opens == 1, "opens inside the window");
+
+  }
+
+//================================================================ what the trader types into the panel
+bool Bad(CGcPanel &p, const int mode, const string expect, const bool now = false)
+  {
+   SConfig c;
+   string errors[];
+   p.BuildConfig(mode, now, c, errors);
+   string all = "";
+   for(int i = 0; i < ArraySize(errors); i++) all += errors[i] + "; ";
+   if(all == "") all = GcNormalizeConfig(c);
+   sink.last = all;
+   return StringFind(all, expect) >= 0;
+  }
+bool Good(CGcPanel &p, const int mode, const bool now = false)
+  {
+   SConfig c;
+   string errors[];
+   p.BuildConfig(mode, now, c, errors);
+   // "Buy / Sell now": the engine fills in the live price before checking the rest
+   string bad = ArraySize(errors) > 0 ? errors[0] : (now ? "" : GcNormalizeConfig(c));
+   sink.last = bad;
+   return bad == "";
+  }
+
+void TestPanel()
+  {
+   Fresh("panel input checks", 4000);
+   CGcPanel p;
+   p.Init(10, 20, 1, 0.01);
+   Check(Bad(p, 0, "trigger price"), "empty trigger");
+   p.draft[0].trigger = "4000";
+   Check(Good(p, 0), "defaults + trigger are valid");
+   p.draft[0].trigger = "4,000"; Check(Bad(p, 0, "not a number"), "comma");
+   p.draft[0].trigger = "0"; Check(Bad(p, 0, "trigger price"), "zero trigger");
+   p.draft[0].trigger = "4000";
+   p.draft[0].lot = "0"; Check(Bad(p, 0, "lot"), "zero lot");
+   p.draft[0].lot = "o.01"; Check(Bad(p, 0, "not a number"), "letter o in lot");
+   p.draft[0].lot = "0.01";
+   p.draft[0].tp = ""; Check(Bad(p, 0, "TP"), "cycle without TP");
+   p.draft[0].tp = "0"; Check(Bad(p, 0, "TP"), "TP 0");
+   p.draft[0].tp = "-3"; Check(Bad(p, 0, "not a number"), "negative TP");
+   p.draft[0].tp = "3";
+   p.draft[0].gap = "0"; Check(Good(p, 0), "gap 0 = same entry");
+   p.draft[0].gap = "x"; Check(Bad(p, 0, "not a number"), "gap typo");
+   p.draft[0].gap = "";
+   p.draft[0].stop = "0"; Check(Bad(p, 0, "Stop price"), "stop 0 must not silently mean 'no stop'");
+   p.draft[0].stop = "4000"; Check(Bad(p, 0, "equal"), "stop = trigger");
+   p.draft[0].stop = "";
+   p.draft[0].dloss = "0"; Check(Bad(p, 0, "Daily loss"), "daily loss 0 must not silently mean 'no limit'");
+   p.draft[0].dloss = "";
+   p.draft[0].mspread = "0"; Check(Bad(p, 0, "Max spread"), "max spread 0 must not silently mean 'no limit'");
+   p.draft[0].mspread = ""; Check(Good(p, 0), "blank max spread = no limit");
+   p.draft[0].maxc = "0"; Check(Bad(p, 0, "Max cycles"), "max cycles 0");
+   p.draft[0].maxc = "2.5"; Check(Bad(p, 0, "Max cycles"), "max cycles 2.5");
+   p.draft[0].maxc = "";
+   p.draft[0].mslip = ""; Check(Good(p, 0), "blank slippage = default");
+   p.draft[0].hours = "25:00-26:00"; Check(Bad(p, 0, "Trading hours"), "impossible hours");
+   p.draft[0].hours = "9:00-17:00"; Check(Bad(p, 0, "Trading hours"), "missing zero");
+   p.draft[0].hours = "09:00-09:00"; Check(Bad(p, 0, "Trading hours"), "empty window would never trade");
+   p.draft[0].hours = " 08:00-17:00 "; Check(Good(p, 0), "spaces trimmed");
+
+   p.draft[1].trigger = "abc"; p.draft[1].tp = "zz";
+   Check(Good(p, 1, true), "Buy now ignores the trigger and TP boxes");
+   p.draft[1].lot = ""; Check(Bad(p, 1, "lot", true), "Buy now still needs a lot");
+   p.draft[1].lot = "0.01"; p.draft[1].trigger = "4000"; p.draft[1].tp = ""; p.draft[1].sl = "";
+   Check(Good(p, 1), "single with neither TP nor SL");
+   p.draft[1].sl = "0"; Check(Bad(p, 1, "SL"), "single SL 0");
+   p.draft[1].sl = ""; p.draft[1].price_input = true; p.draft[1].dir = GC_BUY; p.draft[1].tp = "3990";
+   Check(Bad(p, 1, "above"), "BUY exact TP below the trigger");
+   p.draft[1].tp = "4010"; p.draft[1].sl = "4001"; Check(Bad(p, 1, "below"), "BUY exact SL above the trigger");
+   p.draft[1].sl = "3990"; Check(Good(p, 1), "valid exact prices");
+
+   SConfig run = Cfg(GC_CYCLE, GC_BUY, 4000, 3); run.gap = 2; run.stop_price = 3990; run.max_cycles = 3; run.hours = "08:00-17:00";
+   Arm(run);
+   p.SyncDraft(e.cfg);
+   Check(!p.Differs(e), "form equals the running cycle: no Apply button");
+   p.draft[0].tp = "4"; Check(p.Differs(e), "a change offers Apply");
+   p.draft[0].tp = "3.0"; Check(!p.Differs(e), "3.0 is the same as 3");
+   p.Remove();
+  }
+
+//================================================================ changing the open trade, as drawn on the panel
+void Snap(const string name)
+  {
+   ChartRedraw();
+   Sleep(700);
+   ChartScreenShot(0, "GoldCycle\\" + name + ".png", 1000, 700, ALIGN_RIGHT);
+  }
+string Box(const string id) { return ObjectGetString(0, "GCP_e_" + id, OBJPROP_TEXT); }
+bool Shown(const string name) { return ObjectFind(0, name) >= 0; }
+
+void TestOpenTradePanel()
+  {
+   string err = "";
+   Fresh("change TP / SL of an open trade, Cycle and Single", 3999);
+   CEngine *one = new CEngine();
+   one.Init(sim, sink, GC_SINGLE, 101, 100);
+   sim.Spec(one.spec);
+   CGcPanel v;
+   v.Init(10, 20, 1, 0.01);
+   OpenBuyCycle();
+   v.SyncDraft(e.cfg);
+   v.advanced = true;
+   v.Render(e, one, _Symbol, "", 0);
+   Check(Shown("GCP_b_setlv") && Shown("GCP_b_pick_otp") && Shown("GCP_e_trigger"), "cycle order 1: change-trade section and the form");
+   Check(Box("otp") == "4003.00" && Box("osl") == "", "boxes show order 1's TP, no SL: " + Box("otp") + " / " + Box("osl"));
+   Check(e.ModifyLevels(4008, 3990, err) && Near(sim.open[0].tp, 4008) && Near(sim.open[0].sl, 3990), "order 1: TP and SL changed");
+   v.Render(e, one, _Symbol, "", 0);
+   Check(Box("otp") == "4008.00" && Box("osl") == "3990.00", "boxes follow");
+   Snap("panel_cycle_order1");
+   Check(e.ModifyLevels(4003, 0, err), "SL removed again");
+   Move(4003.1);
+   v.Render(e, one, _Symbol, "", 0);
+   Check(e.leg == 2 && Box("otp") == "" && Box("osl") == "4000.00", "order 2 shows its own SL, not order 1's values: " + Box("otp") + " / " + Box("osl"));
+   Check(e.ModifyLevels(4020, 3995, err) && Near(sim.open[0].tp, 4020) && Near(sim.open[0].sl, 3995), "order 2: TP added, SL moved");
+
+   SConfig c = Cfg(GC_SINGLE, GC_BUY, 0, 0);
+   c.enter_now = true;
+   Check(one.Arm(c, err), "single trade opened");
+   v.tab = 1;
+   v.picking = "tp";
+   v.Render(e, one, _Symbol, "", 0);
+   Check(Shown("GCP_b_setlv") && Shown("GCP_e_otp") && Shown("GCP_e_osl") && Shown("GCP_b_pick_osl"), "single: TP / SL boxes, Pick and Set");
+   Check(!Shown("GCP_e_tp") && !Shown("GCP_e_trigger") && !Shown("GCP_b_arm") && v.picking == "", "single: the next-trade form is hidden, its Pick cancelled");
+   Check(Box("otp") == "" && Box("osl") == "", "no TP/SL yet");
+   double bid = sim.bid;
+   Check(one.ModifyLevels(bid + 10, bid - 10, err) && Near(sim.open[1].tp, bid + 10) && Near(sim.open[1].sl, bid - 10), "single: set on the trade");
+   v.Render(e, one, _Symbol, "", 0);
+   Check(Box("otp") == DoubleToString(bid + 10, 2), "box follows");
+   Snap("panel_single_open");
+   Check(one.ModifyLevels(0, 0, err) && sim.open[1].tp == 0 && sim.open[1].sl == 0, "single: both removed");
+   v.Render(e, one, _Symbol, "", 0);
+   // typed but never sent, then a NEW trade: the old text must not be there
+   v.draft[1].otp = "4100.00";
+   ObjectSetString(0, "GCP_e_otp", OBJPROP_TEXT, "4100.00");
+   one.StopNow(err); Wait(); one.Step(); sim.ms += 1100; one.Step();
+   v.Render(e, one, _Symbol, "", 0);
+   Check(Shown("GCP_e_trigger") && !Shown("GCP_e_otp"), "after closing: the form is back");
+   Check(one.Arm(c, err), "next single trade");
+   v.Render(e, one, _Symbol, "", 0);
+   Check(Box("otp") == "" && v.draft[1].otp == "", "no left-over TP from the previous trade: '" + Box("otp") + "'");
+   v.Remove();
+   delete one;
+  }
+
 void OnStart()
   {
    FolderCreate("GoldCycle");
@@ -599,6 +995,9 @@ void OnStart()
    TestLive();
    TestSingle();
    TestRestart();
+   TestEdges();
+   TestPanel();
+   TestOpenTradePanel();
    Out("RESULT: " + IntegerToString(g_pass) + " passed, " + IntegerToString(g_fail) + " failed");
    if(g_file != INVALID_HANDLE)
       FileClose(g_file);

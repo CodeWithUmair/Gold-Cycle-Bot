@@ -1,7 +1,27 @@
 # CURRENT STATE: read this first (new session / new machine)
 
-**Last updated:** 2026-11-25 (end of Session 8, home laptop). Then read [../HANDOFF.md](../HANDOFF.md) (history) and
+**Last updated:** 2026-11-26 (Session 9: edge testing). Then read [../HANDOFF.md](../HANDOFF.md) (history) and
 [../CLAUDE.md](../CLAUDE.md) (trading rules, source of truth).
+
+## Right now (2026-11-26, about 03:00 local): continue from here
+
+**The user is part-way through the manual test** ([MANUAL_TEST.md](MANUAL_TEST.md)). Session 9 is committed and pushed.
+
+| Item | State |
+|---|---|
+| MetaTrader 5 on the home laptop | installed bot is the latest build; demo 474902598 @ Exness-MT5Trial15, balance 495.88 after the last trade; a "MetaTrader 5 EXNESS" Desktop icon was added |
+| Done by hand so far | attach, Allow Algo Trading, **Buy now**, MT5 restart -> "Resume", trade closed through the bot (+3.37) |
+| Still to test by hand | typing in the boxes (part B), TP/SL on an open trade (new layout), the whole Cycle part D, limits part E |
+| Package for the user's friend | Desktop `GoldCycle-for-friend.zip` = `mql5/release/GoldCycle.ex5` + `mql5/release/HOW-TO-INSTALL.txt` |
+| **Decide** | remove the `InpTestHooks` input from the client build? (it was found switched on once on the user's chart; with it on, Close all does not ask for confirmation). Recommended, not yet approved |
+| Waiting on the client | confirm: a daily loss hit by one bot also closes the other bot's open trade |
+| Demo password | not stored in the repo; ask the user if a separate test copy of MT5 needs it |
+
+How to help: one part of the checklist at a time, short steps with the expected result; read their screenshots. For
+a failure ask for the step number, the panel and the **Experts** tab (or read the terminal's `MQL5\Logs` folder; the
+log is written with a delay). After a code fix: engine tests in a separate portable MT5 copy, then `mql5uild.ps1`.
+The running chart keeps the OLD build until MetaTrader is restarted (then "Resume"). Do not run the automated live test
+on the same account while the user is testing by hand (same magic numbers). Gold pauses 03:00-04:00 local.
 
 ## In one paragraph
 
@@ -63,41 +83,46 @@ and boxes, Single variants, restart/resume, disconnect, late history).
 
 Balance 495.81 → 493.40 = exactly the sum of those five trades. No position left open.
 
+## Edge testing round (2026-11-26)
+
+**Engine + panel tests inside MetaTrader: 242 passed, 0 failed** (Python: 193). The new tests found 7 real bugs, all
+fixed (the first two also in the Python bot):
+
+1. Restart / timeframe switch while order 2 was still being opened made it wait for a touch.
+2. A daily loss limit hit by one bot did not stop the other; order 2 could still open.
+3. `0` in stop price / daily loss / max spread silently meant "no limit".
+4. A rejected order popped up an alert every 5 s.
+5. Trading hours `09:00-09:00` accepted (never trades).
+6. "Buy now" refused because of a typo in the unused trigger box.
+7. Start right after a left-open trade closed lost its journal-file line.
+
+**Live demo, buttons not pressed before: 14 passed** (Start at trigger, Cancel, typo refused, Apply changes, Stop
+after cycle, Stop now, Set on a left-open trade, Close all), the M1→M5 switch reattached the open trade by itself,
+and **restart/resume 8 passed**. Balance 493.40 → 492.51 = the two test trades. No position left open.
+
+Later the same night (user's manual test): a section **"Change THIS open trade"** (TP/SL price boxes, Pick, Set) for
+Cycle and Single; a Single trade open hides the next-trade form; typed-but-unsent TP/SL no longer reappear on the next
+trade; red warning messages shortened to fit one line.
+
+**Manual test (by a person, mouse and keyboard): [MANUAL_TEST.md](MANUAL_TEST.md)**: real typing, Pick, Ctrl+Shift+K,
+confirm boxes, help, collapse, second-chart guard, disconnect and screen scaling are still only testable by hand.
+
 ## NOT tested yet: do this next
 
-1. **Install on the office laptop** (`build.ps1`), attach to `XAUUSDm`, Algo Trading on, and click through by hand
-   (checklist below). The live test pressed most buttons through a test hook, not with a mouse.
-2. Never exercised live: **Apply changes**, **Stop after cycle**, **Stop now**, **Start at trigger price** (Single),
-   **Pick** on chart, Ctrl+Shift+K, confirm pop-ups, `?`, collapse, timeframe switch (should keep running), daily loss
-   limit, disconnect. (The engine side of these is covered by the 146 tests, except the panel/UI parts.)
-3. Other screen sizes / Windows scaling (125–150 %): the panel needs about 700 px of chart height.
-4. The client's VPS; a real (non-demo) account has never been used. Do a full demo session first.
-5. Ask the client for the two files of his old ChatGPT bot if he wants the same field names.
-
-### Manual checklist (demo, 0.01 lot)
-
-| # | Do | Expect |
-|---|---|---|
-| 1 | Attach EA, Algo Trading on | panel, DEMO badge, no red warning line |
-| 2 | Type `abc` in TP | red error, Start refused |
-| 3 | Single: **BUY now** | trade in Toolbox > Trade, comment `GC\|c=1.1\|s=…`, no TP/SL |
-| 4 | Drag the trade's TP/SL line, then type TP/SL + **Set** | panel and trade agree |
-| 5 | **Close trade** | closed, journal row, History tab |
-| 6 | Single: trigger slightly away, **Start at trigger price**, then **Cancel** | armed then stopped, no trade |
-| 7 | Cycle: trigger near price, TP 1, Max cycles 1, stop price a few points away, **Start cycle** | C1.1 with TP, no SL; at TP, C1.2 at once with SL at the entry |
-| 8 | While running change TP, **Apply changes** | order 1's TP moves |
-| 9 | Switch M1 → M5 | bot keeps running |
-| 10 | Close MetaTrader with a trade open, reopen | **Resume** button; nothing happens until pressed |
-| 11 | Red **Close all and stop** | confirm box, everything closed |
+1. The manual test [MANUAL_TEST.md](MANUAL_TEST.md) (the fixed EA is installed in the home laptop's MetaTrader).
+2. Daily loss limit and disconnect live; other screen scaling (125–150 %).
+3. The client's VPS; a real (non-demo) account has never been used. Do a full demo session first.
+4. Ask the client for the two files of his old ChatGPT bot if he wants the same field names.
 
 ## Running the automated tests again
 
 - **Engine tests (no orders):** after `build.ps1`, drag script `GoldCycle > GoldCycleTests` onto any chart. Experts tab:
-  `RESULT: 146 passed, 0 failed` (also in `MQL5\Files\GoldCycle\test_results.txt`).
+  `RESULT: 242 passed, 0 failed` (also in `MQL5\Files\GoldCycle\test_results.txt`).
 - **Live test (demo only, real 0.01 orders, refuses real accounts):** attach the EA with input
   `InpTestHooks = true`, then run script `GoldCycleLiveTest` on the **same chart**. Results and screenshots in
   `MQL5\Files\GoldCycle\`. Restart check: create `restart_open.txt` there, run; restart MetaTrader; replace it with
-  `restart_resume.txt`, run. Set `InpTestHooks` back to false afterwards.
+  `restart_resume.txt`, run. `buttons.txt` runs the other buttons and ends with a timeframe switch (follow it with the
+  restart check part 2). Set `InpTestHooks` back to false afterwards.
 - Unattended (what was used): start `terminal64.exe /config:run.ini` with `[Experts] Enabled=1, AllowLiveTrading=1` and
   `[StartUp] Expert=GoldCycle\GoldCycle`, `ExpertParameters=<preset in MQL5\Presets>`, `Script=GoldCycle\...`,
   `Symbol=XAUUSDm`, `Period=M1`; a file `autoclose.txt` in `Files\GoldCycle` makes the test scripts close MetaTrader.

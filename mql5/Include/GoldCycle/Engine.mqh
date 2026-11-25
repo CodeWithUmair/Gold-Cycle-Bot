@@ -28,7 +28,9 @@ private:
    CGcSink          *m_sink;
    ulong             m_lastAttempt;
    ulong             m_resolveStarted;
-   ulong             m_lastAlert;
+   ulong             m_lastWarnAt;
+   ulong             m_lastPopAt;
+   string            m_lastWarn;
    ulong             m_openedMs;
    int               m_curRow;
 
@@ -84,7 +86,7 @@ public:
       hasPos = false; ZeroPos();
       cycles_opened = 0; session_pnl = 0; floating = 0; stop_after = false; pending_close = CR_NONE;
       stop_reason = ""; resumable = false; resume_state = GCS_IDLE; waiting = "";
-      m_lastAttempt = 0; m_resolveStarted = 0; m_lastAlert = 0; m_openedMs = 0; m_curRow = -1;
+      m_lastAttempt = 0; m_resolveStarted = 0; m_lastWarnAt = 0; m_lastPopAt = 0; m_lastWarn = ""; m_openedMs = 0; m_curRow = -1;
       ArrayResize(rows, 0);
      }
 
@@ -109,14 +111,20 @@ private:
      {
       m_sink.Event(level, "[" + (mode == GC_CYCLE ? "Cycle" : "Single") + "] " + msg, toast);
      }
-   // errors that repeat every tick (rejected close...): log each time, pop up at most every few seconds
+   // errors that repeat every second (rejected order or close): a new problem shows at once, the same one is
+   // repeated rarely, so the screen is not flooded while the bot keeps retrying
    void              Warn_(const string msg)
      {
       ulong t = m_b.Ms();
-      bool pop = m_lastAlert == 0 || t - m_lastAlert >= GC_ALERT_THROTTLE_MS;
-      Say(msg, "error", pop);
+      bool fresh = msg != m_lastWarn;
+      if(!fresh && t - m_lastWarnAt < GC_WARN_REPEAT_MS)
+         return;
+      bool pop = fresh || t - m_lastPopAt >= GC_POPUP_REPEAT_MS;
+      m_lastWarn = msg;
+      m_lastWarnAt = t;
       if(pop)
-         m_lastAlert = t;
+         m_lastPopAt = t;
+      Say(msg, "error", pop);
      }
    void              SetState(const int s, const string msg, const string level = "info", const bool toast = false)
      {
@@ -214,6 +222,18 @@ public:
         { err = "Daily loss limit was hit today: no new trades until tomorrow"; return false; }
       if(!m_b.Spec(spec))
         { err = "Symbol information not available"; return false; }
+      if(hasPos && hasCfg && !resumable)   // a trade left open earlier may have closed this very moment
+        {
+         SPos still;
+         STick now_tick;
+         if(!FindPos(pos.ticket, still) && m_b.Tick(now_tick))
+           {
+            m_resolveStarted = m_b.Ms();
+            int r; string text; double px, pnl;
+            if(RecordClose(now_tick, r, text, px, pnl))
+               Say(text + " (closed after the bot stopped)", "info");
+           }
+        }
       SPos existing[];
       if(m_b.Positions(magic, existing) > 0)
         { err = "A bot position is still open (#" + IntegerToString((long)existing[0].ticket) + "). Close it before arming."; return false; }
@@ -476,7 +496,10 @@ public:
    void              CloseAllAndStop()
      {
       if(!m_b.Spec(spec))
+        {
+         Say("Close all: MetaTrader gave no symbol information. Close the trades by hand", "error", true);
          return;
+        }
       SPos list[];
       int n = m_b.Positions(magic, list);
       ulong tracked = hasPos ? pos.ticket : 0;
@@ -553,6 +576,13 @@ public:
       if(n > 0)
         {
          Stop("DUPLICATE_GUARD", "Another bot position #" + IntegerToString((long)list[0].ticket) + " is open: not resuming", "error");
+         return true;
+        }
+      if(target == GCS_OPENING && cfg.mode == GC_CYCLE && leg == 2)
+        {
+         // order 2 never waits for a touch: carry on opening (the next step first checks the stop price and limits)
+         m_lastAttempt = 0;
+         SetState(GCS_OPENING, "Resumed: " + Label() + " opening at market now (SL " + Px(prev_entry) + ", no TP)", "info", true);
          return true;
         }
       ArmTrigger(tick);
@@ -639,6 +669,21 @@ private:
               }
            }
         }
+      // the limit may have been hit by the other bot: "stop all and no new trades for the day"
+      if(pending_close == CR_NONE && m_sink.BlockDay() == m_b.Day())
+        {
+         if(state == GCS_IN_POSITION)
+           {
+            pending_close = CR_DAILY_LOSS;
+            dirty = true;
+            Say("Daily loss limit hit today: closing " + Label(), "error", true);
+           }
+         else if(state != GCS_RESOLVING)
+           {
+            Stop("DAILY_LOSS", "Daily loss limit hit today: bot stopped, no new trades until tomorrow", "error");
+            return;
+           }
+        }
       if(cycles_opened > 0 && pending_close == CR_NONE && GcStopReached(tick, cfg))
         {
          if(state == GCS_IN_POSITION)
@@ -687,6 +732,11 @@ private:
 
    void              OnOpening(const STick &tick)
      {
+      if(m_sink.BlockDay() == m_b.Day())
+        {
+         Stop("DAILY_LOSS", Label() + " not opened: the daily loss limit was hit today", "error");
+         return;
+        }
       double price = GcTriggerPrice(tick, cfg.trigger_side);
       // CYCLE order 2 (critical): opens at once when order 1 hits TP, whatever the price did (jump, wide spread,
       // trading hours). It never goes back to "wait for a touch". A rejected order is retried every second.

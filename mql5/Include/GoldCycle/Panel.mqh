@@ -32,6 +32,7 @@ struct SDraft
    bool              price_input;
    string            otp, osl;          // TP / SL boxes of the open trade
    double            seen_tp, seen_sl;  // engine values the boxes were last filled from
+   ulong             seen_ticket;       // the trade those boxes belong to
   };
 
 class CGcPanel
@@ -103,23 +104,30 @@ private:
       ObjectSetInteger(0, n, OBJPROP_COLOR, fg);
       ObjectSetInteger(0, n, OBJPROP_BGCOLOR, bg);
       ObjectSetInteger(0, n, OBJPROP_BORDER_COLOR, border);
-      ObjectSetInteger(0, n, OBJPROP_STATE, false);
-      ObjectSetInteger(0, n, OBJPROP_ZORDER, 10);
+      ObjectSetInteger(0, n, OBJPROP_ZORDER, 10);   // the pressed state is reset by the click handler
      }
    // the text of an existing box is only overwritten when `force` (so typing is never lost to a refresh)
    void              Edit(const string id, const int x, const int y, const int w, const string value, const bool locked = false)
      {
       string n = GC_UI + "e_" + id;
       bool created = Make(n, OBJ_EDIT);
-      Place(n, x, y, w, 20);
-      ObjectSetString(0, n, OBJPROP_FONT, "Consolas");
-      ObjectSetInteger(0, n, OBJPROP_FONTSIZE, 9);
-      ObjectSetInteger(0, n, OBJPROP_COLOR, locked ? C_MUTED : C_TEXT);
-      ObjectSetInteger(0, n, OBJPROP_BGCOLOR, locked ? C_BG : C_PANEL);
-      ObjectSetInteger(0, n, OBJPROP_BORDER_COLOR, C_BORDER);
-      ObjectSetInteger(0, n, OBJPROP_READONLY, locked);
-      ObjectSetInteger(0, n, OBJPROP_ZORDER, 10);
-      if(created || forceText || locked)
+      // an existing box is left completely alone unless it moved or was locked / unlocked: re-setting its
+      // properties on every refresh could interrupt typing
+      bool changed = created || ObjectGetInteger(0, n, OBJPROP_YDISTANCE) != m_y + S(y)
+                     || ObjectGetInteger(0, n, OBJPROP_XDISTANCE) != m_x + S(x)
+                     || (ObjectGetInteger(0, n, OBJPROP_READONLY) != 0) != locked;
+      if(changed)
+        {
+         Place(n, x, y, w, 20);
+         ObjectSetString(0, n, OBJPROP_FONT, "Consolas");
+         ObjectSetInteger(0, n, OBJPROP_FONTSIZE, 9);
+         ObjectSetInteger(0, n, OBJPROP_COLOR, locked ? C_MUTED : C_TEXT);
+         ObjectSetInteger(0, n, OBJPROP_BGCOLOR, locked ? C_BG : C_PANEL);
+         ObjectSetInteger(0, n, OBJPROP_BORDER_COLOR, C_BORDER);
+         ObjectSetInteger(0, n, OBJPROP_READONLY, locked);
+         ObjectSetInteger(0, n, OBJPROP_ZORDER, 10);
+        }
+      if(created || forceText || (locked && ObjectGetString(0, n, OBJPROP_TEXT) != value))
          ObjectSetString(0, n, OBJPROP_TEXT, value);
      }
    void              Sweep()   // remove widgets that were not drawn this time
@@ -171,7 +179,7 @@ public:
          draft[i].dir = GC_BUY; draft[i].trigger = ""; draft[i].lot = GcNum(default_lot); draft[i].tp = i == 0 ? "3" : "";
          draft[i].sl = ""; draft[i].gap = ""; draft[i].stop = ""; draft[i].maxc = ""; draft[i].dloss = ""; draft[i].mspread = "0.6";
          draft[i].mslip = "0.5"; draft[i].hours = ""; draft[i].anchor = ANCHOR_PLANNED; draft[i].tside = SIDE_BID;
-         draft[i].price_input = false; draft[i].otp = ""; draft[i].osl = ""; draft[i].seen_tp = -1; draft[i].seen_sl = -1;
+         draft[i].price_input = false; draft[i].otp = ""; draft[i].osl = ""; draft[i].seen_tp = -1; draft[i].seen_sl = -1; draft[i].seen_ticket = 0;
         }
       ChartSetInteger(0, CHART_FOREGROUND, false);
       ChartSetInteger(0, CHART_SHOW_OBJECT_DESCR, true);
@@ -206,9 +214,12 @@ public:
       c.dir = d.dir; c.anchor = d.anchor; c.trigger_side = d.tside; c.enter_now = enter_now;
       c.price_input = mode == GC_SINGLE && d.price_input;
       double v;
-      c.trigger = Num(d.trigger, "Trigger price", errors);
-      if(c.trigger <= 0 && !enter_now)
-         GcAdd(errors, "Enter the trigger price");
+      if(!enter_now)   // "Buy / Sell now" uses the live price
+        {
+         c.trigger = Num(d.trigger, "Trigger price", errors);
+         if(c.trigger <= 0)
+            GcAdd(errors, "Enter the trigger price");
+        }
       c.lot = Num(d.lot, "Lot", errors);
       if(c.lot <= 0)
          GcAdd(errors, "Enter the lot");
@@ -237,14 +248,14 @@ public:
       if(mode == GC_CYCLE)
         {
          c.gap = Num(d.gap, "Cycle gap", errors);
-         c.stop_price = Num(d.stop, "Stop price", errors);
+         c.stop_price = Limit(d.stop, "Stop price", errors);
          v = Num(d.maxc, "Max cycles", errors);
          if(d.maxc != "" && (v < 1 || MathAbs(v - MathRound(v)) > 1e-9))
             GcAdd(errors, "Max cycles must be a whole number, 1 or more");
          c.max_cycles = (int)v;
         }
-      c.daily_loss = Num(d.dloss, "Daily loss limit", errors);
-      c.max_spread = Num(d.mspread, "Max spread", errors);
+      c.daily_loss = Limit(d.dloss, "Daily loss limit", errors);
+      c.max_spread = Limit(d.mspread, "Max spread", errors);
       c.max_slippage = d.mslip == "" ? 0.5 : Num(d.mslip, "Max slippage", errors);
       c.hours = d.hours;
      }
@@ -269,17 +280,17 @@ public:
      }
 
    // does the form differ from the running cycle? (then "Apply changes" is offered)
-   bool              Differs(CEngine *e)
+   bool              Differs(CEngine *bot)
      {
       SConfig c;
       string errors[];
-      BuildConfig(e.mode, false, c, errors);
+      BuildConfig(bot.mode, false, c, errors);
       if(ArraySize(errors) > 0)
          return true;
       if(GcNormalizeConfig(c) != "")
          return true;
       SConfig r;
-      r = e.cfg;
+      r = bot.cfg;
       return MathAbs(c.trigger - r.trigger) > GC_EPS || MathAbs(c.lot - r.lot) > GC_EPS || MathAbs(c.tp_points - r.tp_points) > GC_EPS
              || MathAbs(c.gap - r.gap) > GC_EPS || MathAbs(c.stop_price - r.stop_price) > GC_EPS || c.max_cycles != r.max_cycles
              || MathAbs(c.daily_loss - r.daily_loss) > GC_EPS || MathAbs(c.max_spread - r.max_spread) > GC_EPS
@@ -289,16 +300,16 @@ public:
    void              Render(CEngine *cycle, CEngine *single, const string symbol, const string warning, const double today_pnl)
      {
       m_usedN = 0;
-      CEngine *e = tab == 0 ? cycle : single;
+      CEngine *bot = tab == 0 ? cycle : single;
       width = 652;
       Text("magic_" + IntegerToString(magic), -2000, -2000, " ");   // marks this chart: one GoldCycle per symbol and magic
-      height = collapsed ? 58 : 626;
+      height = collapsed ? 58 : 646;
       Rect("bg", 0, 0, width, height, C_BG, C_BORDER);
       Header(cycle, single, symbol, warning);
       if(!collapsed)
         {
-         Form(e);
-         Info(e, today_pnl);
+         Form(bot);
+         Info(bot, today_pnl);
         }
       Sweep();
       forceText = false;
@@ -312,25 +323,25 @@ public:
      }
 
    //--- price lines on the chart for the selected tab (the running trade, or the form before starting)
-   void              Lines(CEngine *e)
+   void              Lines(CEngine *bot)
      {
       double trig = 0, entry = 0, tp = 0, sl = 0, next = 0, stop = 0;
       bool preview = false;
-      if(e.Active() || e.hasPos)
+      if(bot.Active() || bot.hasPos)
         {
-         trig = (e.state == GCS_ARMED && e.trigger.active) ? e.trigger.level : 0;
-         entry = e.hasPos ? e.pos.price_open : 0;
-         tp = e.hasPos ? e.cur_tp : 0;
-         sl = e.hasPos ? e.cur_sl : 0;
-         next = e.hasPos ? e.NextPlannedEntry() : 0;
-         stop = e.hasCfg ? e.cfg.stop_price : 0;
+         trig = (bot.state == GCS_ARMED && bot.trigger.active) ? bot.trigger.level : 0;
+         entry = bot.hasPos ? bot.pos.price_open : 0;
+         tp = bot.hasPos ? bot.cur_tp : 0;
+         sl = bot.hasPos ? bot.cur_sl : 0;
+         next = bot.hasPos ? bot.NextPlannedEntry() : 0;
+         stop = bot.hasCfg ? bot.cfg.stop_price : 0;
         }
       else
         {
          preview = true;
          SConfig c;
          string errors[];
-         BuildConfig(e.mode, false, c, errors);
+         BuildConfig(bot.mode, false, c, errors);
          if(ArraySize(errors) == 0 && GcNormalizeConfig(c) == "")
            {
             trig = c.trigger;
@@ -357,6 +368,20 @@ private:
          GcAdd(errors, label + ": '" + text + "' is not a number");
          return 0;
         }
+      return v;
+     }
+
+   // an optional limit: blank = none. "0" is refused, it must never silently mean "no limit"
+   double            Limit(const string text, const string label, string &errors[])
+     {
+      double v = Num(text, label, errors);
+      string t = text;
+      StringTrimLeft(t);
+      StringTrimRight(t);
+      double parsed;
+      bool blank;
+      if(t != "" && GcParse(t, parsed, blank) && parsed <= 0)
+         GcAdd(errors, label + " must be above 0 (or blank for none)");
       return v;
      }
 
@@ -414,111 +439,132 @@ private:
       Text("sub", 12, 34, line, c);
      }
 
-   void              Form(CEngine *e)
+   void              Form(CEngine *bot)
      {
-      int m = e.mode;
+      int m = bot.mode;
       SDraft d;
       d = draft[m];
-      bool running = e.Active();
-      bool holding = e.hasPos && (e.state == GCS_IN_POSITION || e.state == GCS_STOPPED || e.state == GCS_RESOLVING);
+      bool running = bot.Active();
+      bool holding = bot.hasPos && (bot.state == GCS_IN_POSITION || bot.state == GCS_STOPPED || bot.state == GCS_RESOLVING);
       bool single_busy = m == GC_SINGLE && (running || holding);
-      bool trigger_locked = m == GC_CYCLE && running && !(e.state == GCS_ARMED && e.leg == 1);
-      if(trigger_locked && e.hasCfg)   // a locked field shows the running value (an unapplied edit can't get stuck)
-         draft[m].trigger = GcNum(e.cfg.trigger);
+      bool trigger_locked = m == GC_CYCLE && running && !(bot.state == GCS_ARMED && bot.leg == 1);
+      if(trigger_locked && bot.hasCfg)   // a locked field shows the running value (an unapplied edit can't get stuck)
+         draft[m].trigger = GcNum(bot.cfg.trigger);
       Button("tab0", 10, 58, 144, 24, "Cycle", tab == 0 ? C_GOLD : C_PANEL, tab == 0 ? clrBlack : C_TEXT);
       Button("tab1", 160, 58, 144, 24, "Single", tab == 1 ? C_GOLD : C_PANEL, tab == 1 ? clrBlack : C_TEXT);
-      int dir = (running && e.hasCfg) ? e.cfg.dir : d.dir;
-      bool dir_locked = running;
-      Button("buy", 10, 88, 144, 26, "BUY", dir == GC_BUY ? C_UP : C_PANEL, dir == GC_BUY ? clrWhite : (dir_locked ? C_MUTED : C_TEXT));
-      Button("sell", 160, 88, 144, 26, "SELL", dir == GC_SELL ? C_DOWN : C_PANEL, dir == GC_SELL ? clrWhite : (dir_locked ? C_MUTED : C_TEXT));
-      int y = 122;
-      Text("l_trig", 10, y + 3, "Trigger price", C_MUTED);
-      Edit("trigger", 108, y, 110, trigger_locked ? draft[m].trigger : d.trigger, trigger_locked);
-      Button("bid", 224, y, 36, 20, "Bid");
-      Button("pick_trigger", 264, y, 40, 20, picking == "trigger" ? "..." : "Pick", picking == "trigger" ? C_INFO : C_PANEL);
-      y += 25;
-      Text("l_lot", 10, y + 3, "Lot", C_MUTED);
-      Edit("lot", 108, y, 110, d.lot);
-      if(e.spec.vol_step > 0)
-         Text("h_lot", 224, y + 3, "step " + GcNum(e.spec.vol_step), C_MUTED, 8);
-      y += 25;
-      if(m == GC_CYCLE)
+      // a Single trade is open: show only what changes THIS trade (the form is for the next one)
+      bool trade_only = m == GC_SINGLE && holding;
+      int y = 88;
+      if(!trade_only)
         {
-         Text("l_tp", 10, y + 3, "TP points", C_MUTED);
-         Edit("tp", 108, y, 110, d.tp);
-         Text("h_tp", 224, y + 3, "order 1", C_MUTED, 8);
+         int dir = (running && bot.hasCfg) ? bot.cfg.dir : d.dir;
+         bool dir_locked = running;
+         Button("buy", 10, 88, 144, 26, "BUY", dir == GC_BUY ? C_UP : C_PANEL, dir == GC_BUY ? clrWhite : (dir_locked ? C_MUTED : C_TEXT));
+         Button("sell", 160, 88, 144, 26, "SELL", dir == GC_SELL ? C_DOWN : C_PANEL, dir == GC_SELL ? clrWhite : (dir_locked ? C_MUTED : C_TEXT));
+         y = 122;
+         Text("l_trig", 10, y + 3, "Trigger price", C_MUTED);
+         Edit("trigger", 108, y, 110, trigger_locked ? draft[m].trigger : d.trigger, trigger_locked);
+         Button("bid", 224, y, 36, 20, "Bid");
+         Button("pick_trigger", 264, y, 40, 20, picking == "trigger" ? "..." : "Pick", picking == "trigger" ? C_INFO : C_PANEL);
          y += 25;
-         Text("l_gap", 10, y + 3, "Cycle gap", C_MUTED);
-         Edit("gap", 108, y, 110, d.gap);
-         Text("h_gap", 224, y + 3, "blank = same", C_MUTED, 8);
+         Text("l_lot", 10, y + 3, "Lot", C_MUTED);
+         Edit("lot", 108, y, 110, d.lot);
+         if(bot.spec.vol_step > 0)
+            Text("h_lot", 224, y + 3, "step " + GcNum(bot.spec.vol_step), C_MUTED, 8);
          y += 25;
-         Text("l_stop", 10, y + 3, "Stop price", C_MUTED);
-         Edit("stop", 108, y, 110, d.stop);
-         Button("pick_stop", 264, y, 40, 20, picking == "stop" ? "..." : "Pick", picking == "stop" ? C_INFO : C_PANEL);
-         y += 25;
-        }
-      else
-        {
-         Text("l_unit", 10, y + 3, "TP / SL as", C_MUTED);
-         Button("unit", 108, y, 110, 20, d.price_input ? "Exact prices" : "Points");
-         Text("h_unit", 224, y + 3, "both optional", C_MUTED, 8);
-         y += 25;
-         Text("l_tp", 10, y + 3, d.price_input ? "TP price" : "TP points", C_MUTED);
-         Edit("tp", 108, y, 110, d.tp);
-         Button("pick_tp", 264, y, 40, 20, picking == "tp" ? "..." : "Pick", picking == "tp" ? C_INFO : C_PANEL);
-         y += 25;
-         Text("l_sl", 10, y + 3, d.price_input ? "SL price" : "SL points", C_MUTED);
-         Edit("sl", 108, y, 110, d.sl);
-         Button("pick_sl", 264, y, 40, 20, picking == "sl" ? "..." : "Pick", picking == "sl" ? C_INFO : C_PANEL);
-         y += 25;
-        }
-      Button("adv", 10, y, 294, 20, advanced ? "Safety and advanced  (hide)" : "Safety and advanced  (show)", C_BG, C_MUTED);
-      y += 25;
-      if(advanced)
-        {
          if(m == GC_CYCLE)
            {
-            Text("l_maxc", 10, y + 3, "Max cycles", C_MUTED);
-            Edit("maxc", 108, y, 50, d.maxc);
+            Text("l_tp", 10, y + 3, "TP points", C_MUTED);
+            Edit("tp", 108, y, 110, d.tp);
+            Text("h_tp", 224, y + 3, "order 1", C_MUTED, 8);
+            y += 25;
+            Text("l_gap", 10, y + 3, "Cycle gap", C_MUTED);
+            Edit("gap", 108, y, 110, d.gap);
+            Text("h_gap", 224, y + 3, "blank = same", C_MUTED, 8);
+            y += 25;
+            Text("l_stop", 10, y + 3, "Stop price", C_MUTED);
+            Edit("stop", 108, y, 110, d.stop);
+            Button("pick_stop", 264, y, 40, 20, picking == "stop" ? "..." : "Pick", picking == "stop" ? C_INFO : C_PANEL);
+            y += 25;
            }
-         Text("l_dloss", 166, y + 3, "Daily loss", C_MUTED);
-         Edit("dloss", 240, y, 64, d.dloss);
-         y += 24;
-         Text("l_mspread", 10, y + 3, "Max spread", C_MUTED);
-         Edit("mspread", 108, y, 50, d.mspread);
-         Text("l_mslip", 166, y + 3, "Max slip", C_MUTED);
-         Edit("mslip", 240, y, 64, d.mslip);
-         y += 24;
-         Text("l_hours", 10, y + 3, "Trading hours", C_MUTED);
-         Edit("hours", 108, y, 110, d.hours);
-         Text("h_hours", 224, y + 3, "08:00-17:00", C_MUTED, 8);
-         y += 24;
-         Button("tside", 10, y, 144, 20, "Trigger on: " + (d.tside == SIDE_ASK ? "Ask" : d.tside == SIDE_MID ? "Mid" : "Bid"));
-         Button("anchor", 160, y, 144, 20, "Levels from: " + (d.anchor == ANCHOR_FILL ? "Fill" : "Planned"));
-         y += 25;
-        }
-
-      //--- open trade TP / SL (like MetaTrader; dragging the lines on the chart works too)
-      if(holding && e.pending_close == CR_NONE && e.state != GCS_RESOLVING)
-        {
-         if(MathAbs(draft[m].seen_tp - e.cur_tp) > GC_EPS || MathAbs(draft[m].seen_sl - e.cur_sl) > GC_EPS)
+         else
            {
-            draft[m].seen_tp = e.cur_tp; draft[m].seen_sl = e.cur_sl;
-            draft[m].otp = e.cur_tp > 0 ? DoubleToString(e.cur_tp, 2) : "";
-            draft[m].osl = e.cur_sl > 0 ? DoubleToString(e.cur_sl, 2) : "";
+            Text("l_unit", 10, y + 3, "TP / SL as", C_MUTED);
+            Button("unit", 108, y, 110, 20, d.price_input ? "Exact prices" : "Points");
+            Text("h_unit", 224, y + 3, "both optional", C_MUTED, 8);
+            y += 25;
+            Text("l_tp", 10, y + 3, d.price_input ? "TP price" : "TP points", C_MUTED);
+            Edit("tp", 108, y, 110, d.tp);
+            Button("pick_tp", 264, y, 40, 20, picking == "tp" ? "..." : "Pick", picking == "tp" ? C_INFO : C_PANEL);
+            y += 25;
+            Text("l_sl", 10, y + 3, d.price_input ? "SL price" : "SL points", C_MUTED);
+            Edit("sl", 108, y, 110, d.sl);
+            Button("pick_sl", 264, y, 40, 20, picking == "sl" ? "..." : "Pick", picking == "sl" ? C_INFO : C_PANEL);
+            y += 25;
+           }
+         Button("adv", 10, y, 294, 20, advanced ? "Safety and advanced  (hide)" : "Safety and advanced  (show)", C_BG, C_MUTED);
+         y += 25;
+         if(advanced)
+           {
+            if(m == GC_CYCLE)
+              {
+               Text("l_maxc", 10, y + 3, "Max cycles", C_MUTED);
+               Edit("maxc", 108, y, 50, d.maxc);
+              }
+            Text("l_dloss", 166, y + 3, "Daily loss", C_MUTED);
+            Edit("dloss", 240, y, 64, d.dloss);
+            y += 24;
+            Text("l_mspread", 10, y + 3, "Max spread", C_MUTED);
+            Edit("mspread", 108, y, 50, d.mspread);
+            Text("l_mslip", 166, y + 3, "Max slip", C_MUTED);
+            Edit("mslip", 240, y, 64, d.mslip);
+            y += 24;
+            Text("l_hours", 10, y + 3, "Trading hours", C_MUTED);
+            Edit("hours", 108, y, 110, d.hours);
+            Text("h_hours", 224, y + 3, "08:00-17:00", C_MUTED, 8);
+            y += 24;
+            Button("tside", 10, y, 144, 20, "Trigger on: " + (d.tside == SIDE_ASK ? "Ask" : d.tside == SIDE_MID ? "Mid" : "Bid"));
+            Button("anchor", 160, y, 144, 20, "Levels from: " + (d.anchor == ANCHOR_FILL ? "Fill" : "Planned"));
+            y += 25;
+           }
+
+        }
+      else if(picking != "otp" && picking != "osl")
+         picking = "";
+
+      //--- the open trade's TP / SL, Cycle and Single (dragging the lines in MetaTrader works too)
+      if(holding && bot.pending_close == CR_NONE && bot.state != GCS_RESOLVING)
+        {
+         // a new trade, or levels changed on the trade: show the real values (never a left-over from before)
+         if(draft[m].seen_ticket != bot.pos.ticket || MathAbs(draft[m].seen_tp - bot.cur_tp) > GC_EPS || MathAbs(draft[m].seen_sl - bot.cur_sl) > GC_EPS)
+           {
+            draft[m].seen_ticket = bot.pos.ticket; draft[m].seen_tp = bot.cur_tp; draft[m].seen_sl = bot.cur_sl;
+            draft[m].otp = bot.cur_tp > 0 ? DoubleToString(bot.cur_tp, 2) : "";
+            draft[m].osl = bot.cur_sl > 0 ? DoubleToString(bot.cur_sl, 2) : "";
             ObjectSetString(0, GC_UI + "e_otp", OBJPROP_TEXT, draft[m].otp);
             ObjectSetString(0, GC_UI + "e_osl", OBJPROP_TEXT, draft[m].osl);
            }
-         Text("l_otp", 10, y + 3, "Trade TP", C_UP);
-         Edit("otp", 70, y, 76, draft[m].otp);
-         Text("l_osl", 152, y + 3, "SL", C_DOWN);
-         Edit("osl", 172, y, 76, draft[m].osl);
-         Button("setlv", 254, y, 50, 20, "Set");
-         y += 27;
+         Text("h_trade", 10, y + 2, "Change THIS open trade   (empty = none)", C_GOLD, 9, "Segoe UI Semibold");
+         y += 22;
+         Text("l_otp", 10, y + 3, "TP price", C_UP);
+         Edit("otp", 108, y, 110, draft[m].otp);
+         Button("pick_otp", 224, y, 80, 20, picking == "otp" ? "click chart" : "Pick", picking == "otp" ? C_INFO : C_PANEL);
+         y += 25;
+         Text("l_osl", 10, y + 3, "SL price", C_DOWN);
+         Edit("osl", 108, y, 110, draft[m].osl);
+         Button("pick_osl", 224, y, 80, 20, picking == "osl" ? "click chart" : "Pick", picking == "osl" ? C_INFO : C_PANEL);
+         y += 25;
+         Button("setlv", 10, y, 294, 26, "Set TP / SL on this trade", C_UP, clrWhite);
+         y += 32;
+         if(trade_only)
+           {
+            Text("h_drag", 10, y, "You can also drag the TP / SL lines on the chart.", C_MUTED, 8);
+            y += 20;
+           }
         }
 
       //--- action buttons
-      if(e.resumable)
+      if(bot.resumable)
         {
          Button("resume", 10, y, 294, 30, "Resume", C_GOLD, clrBlack);
          y += 36;
@@ -532,13 +578,13 @@ private:
            }
          else
            {
-            if(Differs(e))
+            if(Differs(bot))
               {
                Button("apply", 10, y, 200, 28, "Apply changes", C_INFO, clrWhite);
                Button("discard", 216, y, 88, 28, "Discard");
                y += 34;
               }
-            Button("after", 10, y, 144, 28, e.stop_after ? "Stopping after..." : "Stop after cycle", e.stop_after ? C_WARN : C_PANEL, e.stop_after ? clrBlack : C_TEXT);
+            Button("after", 10, y, 144, 28, bot.stop_after ? "Stopping after..." : "Stop after cycle", bot.stop_after ? C_WARN : C_PANEL, bot.stop_after ? clrBlack : C_TEXT);
             Button("stopnow", 160, y, 144, 28, "Stop now");
             y += 34;
            }
@@ -547,8 +593,8 @@ private:
         {
          if(!single_busy)
            {
-            string bid = e.haveTick ? DoubleToString(e.lastTick.bid, 2) : "";
-            string ask = e.haveTick ? DoubleToString(e.lastTick.ask, 2) : "";
+            string bid = bot.haveTick ? DoubleToString(bot.lastTick.bid, 2) : "";
+            string ask = bot.haveTick ? DoubleToString(bot.lastTick.ask, 2) : "";
             Button("sellnow", 10, y, 144, 34, "SELL now  " + bid, C_DOWN, clrWhite);
             Button("buynow", 160, y, 144, 34, "BUY now  " + ask, C_UP, clrWhite);
             y += 40;
@@ -557,7 +603,7 @@ private:
            }
          else
            {
-            bool open = e.hasPos;
+            bool open = bot.hasPos;
             Button("stopnow", 10, y, 294, 30, open ? "Close trade" : "Cancel", open ? C_GOLD : C_PANEL, open ? clrBlack : C_TEXT);
             y += 36;
            }
@@ -581,13 +627,13 @@ private:
             string bad = GcNormalizeConfig(c);
             if(bad != "")
                GcAdd(errors, bad);
-            else if(e.spec.vol_step > 0)
-               GcValidate(c, e.spec, e.lastTick, e.haveTick && !running, errors, warnings);
+            else if(bot.spec.vol_step > 0)
+               GcValidate(c, bot.spec, bot.lastTick, bot.haveTick && !running, errors, warnings);
            }
          int shown = 0;
-         for(int i = 0; i < ArraySize(errors) && shown < 2 && y < 600; i++, shown++, y += 16)
+         for(int i = 0; i < ArraySize(errors) && shown < 2 && y < 620; i++, shown++, y += 16)
             Text("err" + IntegerToString(i), 10, y, errors[i], C_DOWN, 8);
-         for(int i = 0; i < ArraySize(warnings) && shown < 4 && y < 600; i++, shown++, y += 16)
+         for(int i = 0; i < ArraySize(warnings) && shown < 4 && y < 620; i++, shown++, y += 16)
             Text("warn" + IntegerToString(i), 10, y, warnings[i], C_WARN, 8);
         }
      }
@@ -609,52 +655,52 @@ private:
         }
      }
 
-   void              Info(CEngine *e, const double today_pnl)
+   void              Info(CEngine *bot, const double today_pnl)
      {
       int x = 314, w = 328;
       //--- status
       Rect("status", x, 58, w, 132, C_PANEL, C_BORDER);
-      Text("st", x + 10, 62, GcStateName(e.state) + (e.hasCfg && e.state != GCS_IDLE ? "   " + e.Label() : ""), StateColor(e.state), 12, "Segoe UI Semibold");
+      Text("st", x + 10, 62, GcStateName(bot.state) + (bot.hasCfg && bot.state != GCS_IDLE ? "   " + bot.Label() : ""), StateColor(bot.state), 12, "Segoe UI Semibold");
       string l1 = "";
-      if(e.state == GCS_ARMED || e.state == GCS_OPENING)
-         l1 = e.waiting;
-      else if(e.resumable)
+      if(bot.state == GCS_ARMED || bot.state == GCS_OPENING)
+         l1 = bot.waiting;
+      else if(bot.resumable)
          l1 = "Restarted while running. Press Resume.";
-      else if(e.state == GCS_STOPPED && e.stop_reason != "")
-         l1 = "Stopped: " + e.stop_reason;
-      else if(e.pending_close != CR_NONE)
-         l1 = "Closing position (" + GcReasonName(e.pending_close) + ")...";
+      else if(bot.state == GCS_STOPPED && bot.stop_reason != "")
+         l1 = "Stopped: " + bot.stop_reason;
+      else if(bot.pending_close != CR_NONE)
+         l1 = "Closing position (" + GcReasonName(bot.pending_close) + ")...";
       Text("w", x + 10, 86, l1, C_INFO, 8);
       string p1 = "No open trade", p2 = "";
-      if(e.hasPos)
+      if(bot.hasPos)
         {
-         p1 = "#" + IntegerToString((long)e.pos.ticket) + "  " + GcDirName(e.pos.dir) + " " + GcNum(e.pos.volume) + " @ " + DoubleToString(e.pos.price_open, 2);
-         p2 = "TP " + e.Px(e.cur_tp) + "    SL " + e.Px(e.cur_sl);
+         p1 = "#" + IntegerToString((long)bot.pos.ticket) + "  " + GcDirName(bot.pos.dir) + " " + GcNum(bot.pos.volume) + " @ " + DoubleToString(bot.pos.price_open, 2);
+         p2 = "TP " + bot.Px(bot.cur_tp) + "    SL " + bot.Px(bot.cur_sl);
         }
-      Text("p1", x + 10, 104, p1, e.hasPos ? C_TEXT : C_MUTED);
+      Text("p1", x + 10, 104, p1, bot.hasPos ? C_TEXT : C_MUTED);
       Text("p2", x + 10, 121, p2, C_TEXT);
-      double next = e.NextPlannedEntry();
+      double next = bot.NextPlannedEntry();
       Text("nx", x + 10, 138, next > 0 ? "Next entry " + DoubleToString(next, 2) : "", C_MUTED);
-      Text("pl_o", x + 10, 155, e.hasPos ? "Open P/L " + Signed(e.floating) : "", e.floating >= 0 ? C_UP : C_DOWN, 10, "Segoe UI Semibold");
-      Text("pl_s", x + 10, 172, "This session " + Signed(e.session_pnl), e.session_pnl >= 0 ? C_UP : C_DOWN);
+      Text("pl_o", x + 10, 155, bot.hasPos ? "Open P/L " + Signed(bot.floating) : "", bot.floating >= 0 ? C_UP : C_DOWN, 10, "Segoe UI Semibold");
+      Text("pl_s", x + 10, 172, "This session " + Signed(bot.session_pnl), bot.session_pnl >= 0 ? C_UP : C_DOWN);
       Text("pl_d", x + 170, 172, "Today " + Signed(today_pnl), today_pnl >= 0 ? C_UP : C_DOWN);
 
       //--- preview of the next orders
-      Text("h_prev", x, 197, e.mode == GC_CYCLE ? "Preview  (order 1 hits TP, order 2 hits SL, repeat)" : "Preview", C_MUTED, 8);
+      Text("h_prev", x, 197, bot.mode == GC_CYCLE ? "Preview  (order 1 hits TP, order 2 hits SL, repeat)" : "Preview", C_MUTED, 8);
       Rect("prev", x, 212, w, 94, C_PANEL, C_BORDER);
       SConfig c;
       string errors[];
-      BuildConfig(e.mode, false, c, errors);
-      if(e.Active() && e.hasCfg)
-         c = e.cfg;
-      bool good = e.Active() || (ArraySize(errors) == 0 && GcNormalizeConfig(c) == "");
+      BuildConfig(bot.mode, false, c, errors);
+      if(bot.Active() && bot.hasCfg)
+         c = bot.cfg;
+      bool good = bot.Active() || (ArraySize(errors) == 0 && GcNormalizeConfig(c) == "");
       SPlanned plan[];
       if(good)
          GcPreview(c, 5, plan);
       Text("pv_head", x + 8, 215, "Order     Entry        TP           SL", C_MUTED, 8, "Consolas");
       for(int i = 0; i < ArraySize(plan); i++)
          Text("pv" + IntegerToString(i), x + 8, 230 + 14 * i,
-              Pad(e.mode == GC_CYCLE ? "C" + IntegerToString(plan[i].cycle) + "." + IntegerToString(plan[i].leg) : "Trade", 8)
+              Pad(bot.mode == GC_CYCLE ? "C" + IntegerToString(plan[i].cycle) + "." + IntegerToString(plan[i].leg) : "Trade", 8)
               + Pad(DoubleToString(plan[i].entry, 2), 12) + Pad(plan[i].tp > 0 ? DoubleToString(plan[i].tp, 2) : "-", 12)
               + (plan[i].sl > 0 ? DoubleToString(plan[i].sl, 2) : "-"), C_TEXT, 8, "Consolas");
 
@@ -662,12 +708,12 @@ private:
       Text("h_j", x, 312, "Journal", C_MUTED, 8);
       Rect("jr", x, 327, w, 132, C_PANEL, C_BORDER);
       Text("j_head", x + 8, 330, "Order   Fill      Close     Result      P/L", C_MUTED, 8, "Consolas");
-      int n = ArraySize(e.rows);
+      int n = ArraySize(bot.rows);
       for(int i = 0; i < 8 && i < n; i++)
         {
          SRow r;
-         r = e.rows[n - 1 - i];
-         string label = e.mode == GC_CYCLE ? "C" + IntegerToString(r.cycle) + "." + IntegerToString(r.leg) : "Trade";
+         r = bot.rows[n - 1 - i];
+         string label = bot.mode == GC_CYCLE ? "C" + IntegerToString(r.cycle) + "." + IntegerToString(r.leg) : "Trade";
          bool open = r.close_time == 0;
          Text("j" + IntegerToString(i), x + 8, 345 + 14 * i,
               Pad(label, 8) + Pad(DoubleToString(r.fill, 2), 10) + Pad(open ? "..." : DoubleToString(r.close_price, 2), 10)

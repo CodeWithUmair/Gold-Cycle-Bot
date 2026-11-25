@@ -616,6 +616,48 @@ See the table at the end of CURRENT_STATE.md.
 
 ---
 
+## Session 9 — 2026-11-26 — edge testing of the Expert Advisor, manual test guide
+
+### State before
+Session 8 pushed (`2344eb5`). The user wanted edge cases covered and help testing by hand.
+
+### What was done
+| Item | Result | Files |
+|---|---|---|
+| ~35 edge-case scenarios + panel input tests written and run **before** fixing: 210 passed, 15 failed | ✅ 7 real bugs | `GoldCycleTests.mq5` |
+| Fixes: order 2 resumes opening (not "wait for touch"); daily loss block stops both bots and blocks order 2; `0` limits refused; same-start-end hours refused; pop-up/log throttle (same error: log 10 s, pop-up 60 s); journal line when Start follows a left-open close; "Buy now" ignores the trigger box; panel refresh no longer touches a box being typed in; `g_autoPending` reset | ✅ 225/225 | `Engine.mqh`, `Logic.mqh`, `Panel.mqh`, `Types.mqh`, `GoldCycle.mq5` |
+| Same two engine bugs reproduced and fixed in Python (+ hours check) | ✅ 193 pytest, mypy, ruff | `cycle_engine.py`, `models.py`, `tests/test_edge_restart_daily.py` |
+| Live demo: new `buttons` mode + timeframe switch (test hook) + restart/resume | ✅ 14 + 8 passed, auto-reattach on M5 | `GoldCycleLiveTest.mq5` |
+| Manual test guide; fixed EA installed in the home laptop's MT5 | ✅ | `docs/MANUAL_TEST.md` |
+
+### Findings
+#### Finding #1 — 🔴→fixed: a restart could break the "order 2 opens at once" rule (both implementations)
+#### Finding #2 — 🔴→fixed: the daily loss limit was not account-wide for a running second bot (both implementations)
+Behaviour change to tell the client: when either bot hits the limit, the other one's open trade is **closed** too
+(spec §5 "Stop all + no new trades for the day").
+
+### Later the same night (manual testing with the user)
+| Item | Result | Files |
+|---|---|---|
+| User attached the EA: "Allow Algo Trading" unticked, then `InpTestHooks` found `true` on their chart (cause unknown) | Reset + tick; removing that input from the client build recommended, not yet approved | — |
+| "Make sure I can change TP/SL on the ongoing trade": already worked, but the next-trade TP boxes confused. New "Change THIS open trade" section with Pick; Single hides the next-trade form; stale typed values cleared per ticket; warnings fit 63 chars | ✅ 242/242 (17 new, with screenshots on the sim) | `Panel.mqh`, `Broker.mqh`, `GoldCycle.mq5`, `GoldCycleTests.mq5` |
+| User restarted MT5 (needed to load a new build), Resume, closed the trade through the bot +3.37 | ✅ by hand | — |
+| MT5 Desktop icon; `GoldCycle-for-friend.zip` with the EA and `mql5/release/HOW-TO-INSTALL.txt` | ✅ | `mql5/release/HOW-TO-INSTALL.txt` |
+| Committed and pushed on the user's "push" | ✅ | — |
+
+### State at the end of the chat (01:09 local, before the manual testing)
+Home laptop: MT5 running on demo 474902598 (balance 492.51, 0 positions), fixed EA installed but not attached, Algo
+Trading off. The user is beginning `docs/MANUAL_TEST.md` and continues in a new chat. **Session 9 is not committed**
+(wait for "push"). Details: CURRENT_STATE → "Right now".
+
+### ⚠️ NOT done yet — next session starts here
+The manual test (`docs/MANUAL_TEST.md`), VPS, client feedback. Python behaviour changes are not live-tested.
+
+### Open items (client)
+Confirm Finding #2's "close the other bot's trade too". Others unchanged (CURRENT_STATE).
+
+---
+
 ## Template for the next session
 
 ```markdown

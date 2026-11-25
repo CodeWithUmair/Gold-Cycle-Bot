@@ -622,6 +622,11 @@ class CycleEngine:
             if ps:
                 self._stop("DUPLICATE_GUARD", f"Another bot position #{ps[0].ticket} is open — not resuming", "error")
                 return
+            if target == BotState.OPENING and self.cfg.mode == Mode.CYCLE and self.leg == 2:
+                # order 2 never waits for a touch: carry on opening (the next step checks stop price and limits first)
+                self._last_order_attempt = 0.0
+                self._set_state(BotState.OPENING, f"Resumed: {self._c} opening at market now", toast=True)
+                return
             self._arm_trigger(tick)
             self._set_state(
                 BotState.ARMED,
@@ -756,6 +761,16 @@ class CycleEngine:
                     self._stop("DAILY_LOSS", f"{msg} — bot stopped", "error")
                     return
 
+        # the limit may have been hit by the other bot: "stop all and no new trades for the day" (§5)
+        if self.pending_close is None and self._daily_block_active():
+            if self.state == BotState.IN_POSITION:
+                self.pending_close = CloseReason.DAILY_LOSS
+                self._log(f"Daily loss limit hit today — closing {self._c}", "error", toast=True)
+            elif self.state != BotState.RESOLVING:
+                msg = "Daily loss limit hit today — bot stopped, no new trades until tomorrow"
+                self._stop("DAILY_LOSS", msg, "error")
+                return
+
         if (
             self.cycles_opened > 0
             and self.pending_close is None
@@ -804,6 +819,9 @@ class CycleEngine:
         cfg, spec = self.cfg, self.spec
         assert cfg and spec and self.planned_entry is not None
         planned = self.planned_entry
+        if self._daily_block_active():
+            self._stop("DAILY_LOSS", f"{self._c} not opened: the daily loss limit was hit today", "error")
+            return
         price = trigger_price(tick, cfg.trigger_price_side)
         # CYCLE order 2 (client, 2026-11-21, critical): opens at once when order 1 hits TP, whatever the price did
         # (a jump past the TP, a wide spread, the hours window closing). Never falls back to "wait for a touch".

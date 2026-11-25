@@ -292,10 +292,100 @@ void ResumeAfterRestart()
    Shot("shot_end");
   }
 
+// the buttons the main run does not press, with real demo orders. Ends with a timeframe switch while a trade is open
+// (that removes this script; afterwards check that the bot carried on by itself).
+void ButtonsTest()
+  {
+   Out("--- SINGLE: start at a far trigger, then Cancel");
+   Click("tab1");
+   Type("lot", "0.01");
+   Type("trigger", DoubleToString(Bid() - 15, 2));
+   Type("tp", ""); Type("sl", "");
+   Click("arm");
+   Check(StateName("single") == "ARMED" && Pos(MAGIC_SINGLE) == 0, "armed, waiting (" + StateName("single") + ")");
+   Click("stopnow");
+   Check(StateName("single") == "STOPPED" && Pos(MAGIC_SINGLE) == 0, "Cancel: stopped without a trade");
+
+   Out("--- CYCLE: a typo must never start the bot");
+   Click("tab0");
+   Click("buy");
+   Type("trigger", DoubleToString(Bid() - 15, 2));
+   Type("lot", "0.01");
+   Type("tp", "abc");
+   Type("gap", ""); Type("stop", "");
+   Click("arm");
+   Check(StateName("cycle") != "ARMED" && StateName("cycle") != "OPENING" && Pos(MAGIC_CYCLE) == 0, "TP 'abc' refused (" + StateName("cycle") + ")");
+
+   Out("--- CYCLE: Apply changes while waiting");
+   Type("tp", "20");
+   if(ObjectFind(0, "GCP_e_maxc") < 0) Click("adv");
+   Type("maxc", "1"); Type("mspread", "1"); Type("mslip", "1"); Type("dloss", ""); Type("hours", "");
+   Click("arm");
+   Check(StateName("cycle") == "ARMED", "armed (" + StateName("cycle") + ")");
+   double moved = NormalizeDouble(Bid() - 12, 2);
+   Type("trigger", DoubleToString(moved, 2));
+   Click("apply");
+   Check(MathAbs(StringToDouble(State("cycle", "planned")) - moved) < 0.001 && Pos(MAGIC_CYCLE) == 0, "waiting level moved to " + DoubleToString(moved, 2));
+   Click("stopnow");
+
+   Out("--- CYCLE: open order 1, change TP live, Stop after cycle, Stop now, set TP/SL, Close all");
+   ulong t = 0;
+   double trig = 0;
+   int side = 1;
+   for(int attempt = 0; attempt < 4 && t == 0 && !IsStopped(); attempt++)
+     {
+      int dir = (Bid() >= iClose(_Symbol, PERIOD_M1, 2)) ? 0 : 1;
+      if(attempt % 2 == 1) dir = 1 - dir;
+      side = dir == 0 ? 1 : -1;
+      Click(dir == 0 ? "buy" : "sell");
+      trig = NormalizeDouble(Bid() + side * 0.05, 2);
+      Type("trigger", DoubleToString(trig, 2));
+      Type("tp", "20");
+      Click("arm");
+      t = WaitPos(MAGIC_CYCLE, 60);
+      if(t == 0) Click("stopnow");
+     }
+   Check(t != 0, "order 1 open #" + IntegerToString((long)t));
+   if(t != 0)
+     {
+      Sleep(1500);
+      Type("tp", "25");
+      Shot("shot_apply_before");
+      Click("apply");
+      Sleep(1500);
+      PositionSelectByTicket(t);
+      Check(MathAbs(PositionGetDouble(POSITION_TP) - (trig + side * 25)) < 0.011, "Apply changes moved the TP on the server to " + DoubleToString(PositionGetDouble(POSITION_TP), 2));
+      Click("after");
+      Check(State("cycle", "stop_after") == "1" && StateName("cycle") == "IN_POSITION", "Stop after cycle noted");
+      Click("stopnow");
+      Sleep(1000);
+      Check(StateName("cycle") == "STOPPED" && PositionSelectByTicket(t), "Stop now: bot stopped, the trade stays open");
+      double tp = NormalizeDouble(trig + side * 30, 2), sl = NormalizeDouble(trig - side * 30, 2);
+      Type("otp", DoubleToString(tp, 2)); Type("osl", DoubleToString(sl, 2));
+      Click("setlv");
+      Sleep(1500);
+      PositionSelectByTicket(t);
+      Check(MathAbs(PositionGetDouble(POSITION_TP) - tp) < 0.011 && MathAbs(PositionGetDouble(POSITION_SL) - sl) < 0.011, "TP/SL set on the left-open trade");
+      Shot("shot_left_open");
+      Click("killall");
+      Check(WaitGone(t, 15), "Close all closed the left-open trade");
+     }
+
+   Out("--- timeframe switch while a Single trade is open");
+   Click("tab1");
+   Click("buynow");
+   ulong one = WaitPos(MAGIC_SINGLE, 15);
+   Check(one != 0, "Single trade open #" + IntegerToString((long)one));
+   Out("RESULT (buttons, before the switch): " + IntegerToString(g_pass) + " passed, " + IntegerToString(g_fail) + " failed");
+   if(g_f != INVALID_HANDLE) { FileClose(g_f); g_f = INVALID_HANDLE; }
+   EventChartCustom(0, 3, PERIOD_M5, 0, "");
+   Sleep(30000);   // the timeframe change removes this script
+  }
+
 void OnStart()
   {
    FolderCreate("GoldCycle");
-   string mode = FileIsExist("GoldCycle\\restart_open.txt") ? "open" : FileIsExist("GoldCycle\\restart_resume.txt") ? "resume" : "full";
+   string mode = FileIsExist("GoldCycle\\buttons.txt") ? "buttons" : FileIsExist("GoldCycle\\restart_open.txt") ? "open" : FileIsExist("GoldCycle\\restart_resume.txt") ? "resume" : "full";
    g_f = FileOpen(mode == "full" ? "GoldCycle\\live_results.txt" : "GoldCycle\\live_results_" + mode + ".txt",
                   FILE_WRITE | FILE_TXT | FILE_ANSI | FILE_SHARE_READ);
    for(int i = 0; i < 600 && (AccountInfoInteger(ACCOUNT_LOGIN) == 0 || ObjectFind(0, "GCP_r_bg") < 0); i++)
@@ -318,7 +408,9 @@ void OnStart()
       Finish();
       return;
      }
-   if(mode == "open")
+   if(mode == "buttons")
+      ButtonsTest();
+   else if(mode == "open")
       OpenForRestart();
    else if(mode == "resume")
       ResumeAfterRestart();

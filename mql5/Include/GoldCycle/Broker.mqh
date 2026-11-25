@@ -104,11 +104,11 @@ public:
    virtual string    TradeBlockReason() override
      {
       if(TerminalInfoInteger(TERMINAL_TRADE_ALLOWED) == 0)
-         return "Algo Trading is OFF: click the 'Algo Trading' button at the top of MetaTrader (it must be green)";
+         return "Algo Trading is OFF: click it at the top of MetaTrader (green)";
       if(MQLInfoInteger(MQL_TRADE_ALLOWED) == 0)
-         return "Trading is not allowed for this bot: open its settings (F7) and tick 'Allow Algo Trading'";
+         return "Not allowed: press F7, Common tab, tick 'Allow Algo Trading'";
       if(AccountInfoInteger(ACCOUNT_TRADE_ALLOWED) == 0)
-         return "This account cannot trade (investor password, or trading disabled by the broker)";
+         return "Account cannot trade (investor password or disabled by broker)";
       if(AccountInfoInteger(ACCOUNT_TRADE_EXPERT) == 0)
          return "The broker disabled automated trading on this account";
       return "";

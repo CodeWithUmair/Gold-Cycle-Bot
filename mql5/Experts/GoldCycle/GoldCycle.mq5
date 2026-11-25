@@ -295,6 +295,7 @@ int OnInit()
    g_broker.SetSymbol(_Symbol);
    g_panel.Init(InpPanelX, InpPanelY, InpMagic, InpDefaultLot);
    g_loaded = false;
+   g_autoPending = false;
    TryLoad();
    Draw();
    EventSetMillisecondTimer(200);
@@ -514,6 +515,17 @@ void Pick(const double price)
    int m = g_panel.tab;
    string field = g_panel.picking;
    string text = DoubleToString(price, 2);
+   if(field == "otp" || field == "osl")   // the open trade: fill the box, "Set" sends it
+     {
+      if(field == "otp")
+         g_panel.draft[m].otp = text;
+      else
+         g_panel.draft[m].osl = text;
+      g_panel.picking = "";
+      g_panel.Message("Now press 'Set TP / SL on this trade'", C_INFO);
+      g_panel.forceText = true;
+      return;
+     }
    if(field == "trigger")
       g_panel.draft[m].trigger = text;
    else if(field == "stop")
@@ -554,6 +566,11 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
       name = StringSubstr(sparam, 0, eq);
       ObjectSetString(0, name, OBJPROP_TEXT, StringSubstr(sparam, eq + 1));
       ev = CHARTEVENT_OBJECT_ENDEDIT;
+     }
+   if(InpTestHooks && id == CHARTEVENT_CUSTOM + 3)          // test script switches the chart timeframe
+     {
+      ChartSetSymbolPeriod(0, _Symbol, (ENUM_TIMEFRAMES)lparam);
+      return;
      }
    if(ev == CHARTEVENT_OBJECT_CLICK && StringFind(name, "GCP_b_") == 0)
      {

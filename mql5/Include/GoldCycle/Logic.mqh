@@ -205,6 +205,8 @@ string GcNormalizeConfig(SConfig &c)
    StringTrimRight(c.hours);
    if(c.hours != "" && !GcHoursValid(c.hours))
       return "Trading hours must look like 08:00-17:30";
+   if(c.hours != "" && StringSubstr(c.hours, 0, 5) == StringSubstr(c.hours, 6, 5))
+      return "Trading hours: start and end can't be the same (the bot would never trade)";
    if(c.max_slippage < 0)
       return "Max slippage can't be negative";
    if(c.lot_mult <= 0)

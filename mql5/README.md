@@ -30,7 +30,8 @@ While it runs you can change fields and press **Apply changes** (the direction i
 **Single tab**: one trade. **BUY now / SELL now** (opens with no TP/SL), or **Start at trigger price** with optional TP
 and SL, in points or exact prices. **Close trade** closes it.
 
-**Open trade**: type TP / SL and press **Set**, or drag the TP/SL lines on the chart as usual in MetaTrader. The bot
+**Open trade**: under **Change THIS open trade** type the TP / SL prices (or **Pick** them on the chart) and press
+**Set TP / SL on this trade**, or drag the TP/SL lines on the chart as usual in MetaTrader. An empty box removes it. The bot
 follows your change. In a cycle, order 2 opens where order 1's TP actually is.
 
 **Safety and advanced**: max cycles, daily loss limit, max spread, max slippage, trading hours (PC time), trigger on

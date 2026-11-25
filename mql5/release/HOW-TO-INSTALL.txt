@@ -1,0 +1,53 @@
+GoldCycle - the gold bot inside MetaTrader 5
+============================================
+Use a DEMO account first.
+
+BEFORE YOU START
+- If the old GoldCycle bot (the browser one) is installed on this computer, stop it:
+  open "GoldCycle Manager" and choose 3. Never run two bots on the same account.
+
+INSTALL (once)
+1. Open MetaTrader 5 (Exness) and log in to your account.
+2. Top menu: File > Open Data Folder. Open the folder MQL5, then Experts.
+3. Copy the file GoldCycle.ex5 into that Experts folder.
+4. Go back to MetaTrader. Press Ctrl+N (Navigator). Right-click "Expert Advisors" > Refresh.
+   "GoldCycle" appears.
+5. In Market Watch, right-click gold (XAUUSDm or XAUUSD) > Chart Window. Make the window big.
+6. Drag GoldCycle onto that gold chart.
+7. Tab "Common": tick "Allow Algo Trading".
+   Tab "Inputs": "Automated testing only" must stay false. Press OK.
+8. Click "Algo Trading" at the top of MetaTrader so it is GREEN.
+
+The panel appears on the chart. It should say DEMO and show no red message.
+
+USE
+Point = 1.00 of price (4000 to 4003 is 3 points). Start with lot 0.01.
+
+SINGLE tab (one trade)
+- BUY now / SELL now: opens at once, without TP and SL.
+- Or type a trigger price, TP and SL (both optional) > "Start at trigger price".
+- "Close trade" closes it.
+
+CYCLE tab
+- Choose BUY or SELL, type the trigger price, lot and TP points > "Start cycle".
+  1) When price touches the trigger, order 1 opens with a TP and NO stop loss.
+  2) When order 1 reaches its TP, order 2 opens at once, with its stop loss at order 1's entry.
+  3) When order 2 hits its stop loss, the next cycle waits at the entry again (plus the gap, if set).
+- IMPORTANT: order 1 has no stop loss. Always set a "Stop price" and/or a "Daily loss" limit.
+
+CHANGE TP / SL OF AN OPEN TRADE (Single and Cycle)
+- Under "Change THIS open trade": type the prices > "Set TP / SL on this trade".
+- Or drag the TP / SL lines on the chart. An empty box removes it.
+
+STOP
+- "Stop now": the bot stops, the open trade stays open.
+- "Close all and stop" (red): closes the trade and stops. Ctrl+Shift+K closes both bots.
+- Remove the bot: right-click the chart > Expert List > GoldCycle > Remove.
+
+GOOD TO KNOW
+- MetaTrader must stay OPEN and the computer ON, or the bot does nothing.
+  TP and SL stay on Exness even if MetaTrader is closed.
+- After closing and opening MetaTrader, press "Resume" to continue.
+- If you close a bot trade by hand, that bot stops.
+- Use the bot on ONE gold chart only.
+- Gold is closed on weekends and for one hour every night (03:00-04:00 Pakistan time).
