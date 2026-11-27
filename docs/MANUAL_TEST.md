@@ -23,11 +23,12 @@ If a step fails: screenshot the panel **and** the Toolbox **Experts** tab, and n
 | B3 | Type a new TP and click straight on another button **without** Enter | the new value is used (see the dotted TP line) | ☐ |
 | B4 | Safety and advanced: Stop price `0`, then Max spread `0`, then hours `09:00-09:00` | each refused with a clear red message | ☐ |
 | B6 | BUY, trigger 4000-style round price, TP 3 | dotted chart lines: trigger, TP = trigger+3 | ☐ |
-| B7 | **?**, then **-** and **+** | help window; panel hides and returns; nothing lost | ☐ |
+| B7 | **?**, scroll, **Back to the bot**; then **-** and **+** | help page in the panel; panel folds and returns; nothing lost | ☐ |
 | B8 | Switch toolbar Algo Trading **off** → Start cycle; switch it on again | red warning line; start refused with the reason | ☐ |
 | B9 | Drag GoldCycle onto a **second** XAUUSDm chart | pop-up "already runs on another chart"; not added | ☐ |
 | B10 | Drag the panel by its title; try to push it off the chart; switch M1 → M5 | panel follows the mouse, chart does not scroll, title stays visible, position kept | ☐ |
 | B11 | Drag the chart itself, away from the panel | chart scrolls as usual | ☐ |
+| B13 | Cycle tab with **Safety and advanced** open: roll the mouse wheel over the panel; drag the bar on its right | the form scrolls, the chart does not move, title, tabs and messages stay | ☐ |
 | B12 | Press **Float**; drag that window outside MetaTrader; press **Dock** | chart + panel float as one window, then return | ☐ |
 
 ## C. Single tab (demo trades)

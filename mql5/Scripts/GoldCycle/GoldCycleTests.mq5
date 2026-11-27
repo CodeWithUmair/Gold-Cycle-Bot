@@ -963,6 +963,124 @@ void TestBuyNow()
    Check(Now(p, GC_BUY, "", "") && sim.open[0].tp == 0 && sim.open[0].sl == 0, "BUY now: empty boxes = no TP / SL");
   }
 
+//================================================================ scrolling a panel that does not fit
+bool Fits(CGcPanel &p)   // every box and button lies inside the panel
+  {
+   double k = TerminalInfoInteger(TERMINAL_SCREEN_DPI) / 96.0;
+   for(int i = ObjectsTotal(0, 0, -1) - 1; i >= 0; i--)
+     {
+      string n = ObjectName(0, i, 0, -1);
+      if(StringFind(n, "GCP_e_") != 0 && StringFind(n, "GCP_b_") != 0 && StringFind(n, "GCP_r_") != 0)
+         continue;
+      long y = ObjectGetInteger(0, n, OBJPROP_YDISTANCE), h = ObjectGetInteger(0, n, OBJPROP_YSIZE);
+      if(y < p.Y() || y + h > p.Y() + (long)MathRound(p.height * k) + 1)
+        {
+         Print("outside the panel: ", n);
+         return false;
+        }
+     }
+   return true;
+  }
+
+void TestScroll()
+  {
+   Fresh("scroll a long panel", 3999);
+   CEngine *one = new CEngine();
+   one.Init(sim, sink, GC_SINGLE, 101, 100);
+   sim.Spec(one.spec);
+   OpenBuyCycle();
+   CGcPanel p;
+   p.Init(10, 20, 1, 0.01);
+   p.SyncDraft(e.cfg);
+   p.advanced = true;
+   p.maxHeight = 300;
+   p.Render(e, one, "");
+   double k = TerminalInfoInteger(TERMINAL_SCREEN_DPI) / 96.0;
+   Check(p.CanScroll() && p.height <= 330 && Shown("GCP_r_thumb"), "too long: a scroll bar, height " + IntegerToString(p.height));
+   Check(Shown("GCP_e_trigger") && !Shown("GCP_b_killall") && Fits(p), "top shown, bottom hidden, nothing outside");
+   Check(!Shown("GCP_t_acct") && !Shown("GCP_t_money") && !Shown("GCP_t_sub") && !Shown("GCP_t_pl_d"), "simple top: no account, balance or day lines");
+   Snap("panel_scroll_top");
+   Check(!p.Wheel(2000, 100, -120), "wheel away from the panel: nothing");
+   Check(p.Wheel(50, 150, -120) && p.Offset() > 0, "wheel down scrolls");
+   for(int i = 0; i < 40; i++)
+      p.Wheel(50, 150, -120);
+   p.Render(e, one, "");
+   Check(Shown("GCP_b_killall") && !Shown("GCP_e_trigger") && Fits(p), "scrolled to the bottom");
+   Check(Shown("GCP_e_otp") && ObjectGetString(0, "GCP_e_otp", OBJPROP_TEXT) == "4003.00", "a box that comes into view has its value");
+   Snap("panel_scroll_bottom");
+   int track = (int)ObjectGetInteger(0, "GCP_r_track", OBJPROP_YDISTANCE);
+   int bar = (int)ObjectGetInteger(0, "GCP_r_track", OBJPROP_XDISTANCE) + 3;
+   p.Mouse(bar, track + 2, false);
+   p.Mouse(bar, track + 2, true);
+   Check(p.Offset() == 0 && p.redraw && p.X() == 10, "press on top of the bar: back to the top, the panel stays");
+   p.Render(e, one, "");
+   p.Mouse(bar, track + (int)(600 * k), true);
+   Check(p.Offset() > 0, "drag the bar down");
+   p.Mouse(bar, track + (int)(600 * k), false);
+   p.maxHeight = 0;
+   p.Render(e, one, "");
+   Check(!p.CanScroll() && p.Offset() == 0 && !Shown("GCP_r_thumb") && Shown("GCP_e_trigger") && Shown("GCP_b_killall"), "no limit: everything, no bar");
+   p.Render(e, one, "Algo Trading is OFF: click it at the top of MetaTrader (green)");
+   Check(Shown("GCP_t_top0") && Fits(p), "a warning still shows under the title");
+   p.Remove();
+   delete one;
+  }
+
+//================================================================ the help page behind "?"
+string AllText()   // every label of the panel
+  {
+   string all = "";
+   for(int i = 0; i < ObjectsTotal(0, 0, -1); i++)
+     {
+      string n = ObjectName(0, i, 0, -1);
+      if(StringFind(n, "GCP_t_") == 0)
+         all += ObjectGetString(0, n, OBJPROP_TEXT) + " ";
+     }
+   return all;
+  }
+
+void TestHelp()
+  {
+   Fresh("help page", 3999);
+   CEngine *one = new CEngine();
+   one.Init(sim, sink, GC_SINGLE, 101, 100);
+   sim.Spec(one.spec);
+   CGcPanel p;
+   p.Init(10, 20, 1, 0.01);
+   p.maxHeight = 0;
+   p.Message("Applied", C_UP);
+   p.ToggleHelp();
+   p.Render(e, one, "");
+   Check(Shown("GCP_b_back") && !Shown("GCP_e_trigger") && !Shown("GCP_b_arm") && !Shown("GCP_b_tab0") && !Shown("GCP_t_note0"), "help replaces the form");
+   string all = AllText();
+   string items[] = {"Point", "Trigger price", "Lot", "TP points", "Cycle gap", "Stop price", "Max cycles", "Daily loss", "Max spread", "Max slip",
+                     "Trading hours", "Price / Points", "Start cycle", "Resume", "Stop after cycle", "Stop now", "BUY / SELL now",
+                     "Start at trigger price", "Close trade", "Close all and stop", "Float / Dock", "Lines"};
+   for(int i = 0; i < ArraySize(items); i++)
+      Check(StringFind(all, items[i]) >= 0, "help explains " + items[i]);
+   bool cut = false;
+   for(int i = 0; i < ObjectsTotal(0, 0, -1); i++)
+     {
+      string n = ObjectName(0, i, 0, -1);
+      if(StringFind(n, "GCP_t_h") == 0 && StringLen(ObjectGetString(0, n, OBJPROP_TEXT)) >= 63)
+         cut = true;
+     }
+   Check(!cut, "no help line is long enough to be cut by MetaTrader");
+   p.maxHeight = 400;
+   p.Render(e, one, "");
+   Check(p.CanScroll() && Fits(p), "the help scrolls");
+   Snap("panel_help");
+   p.ToggleHelp();
+   p.maxHeight = 0;
+   p.Render(e, one, "");
+   Check(Shown("GCP_e_trigger") && Shown("GCP_b_tab0") && !Shown("GCP_b_back") && !Shown("GCP_t_h0_") && p.Offset() == 0, "back to the form");
+   p.collapsed = true;
+   p.ToggleHelp();
+   Check(p.help && !p.collapsed, "? opens a folded panel");
+   p.Remove();
+   delete one;
+  }
+
 //================================================================ dragging the panel
 void TestDrag()
   {
@@ -973,23 +1091,23 @@ void TestDrag()
    bool scroll = ChartGetInteger(0, CHART_MOUSE_SCROLL) != 0;
    CGcPanel p;
    p.Init(10, 20, 1, 0.01);
-   p.Render(e, one, _Symbol, "", 0);
+   p.Render(e, one, "");
    int wide = (int)MathRound(p.width * TerminalInfoInteger(TERMINAL_SCREEN_DPI) / 96.0);
    Check(!p.Mouse(30, 30, false) && ChartGetInteger(0, CHART_MOUSE_SCROLL) == 0, "mouse over the panel: the chart does not scroll");
    Check(!p.Mouse(30, 30, true), "pressed, not moved yet");
    Check(p.Mouse(130, 90, true) && p.X() == 110 && p.Y() == 80, "dragged by the title: " + IntegerToString(p.X()) + "," + IntegerToString(p.Y()));
    Check(ObjectGetInteger(0, "GCP_r_bg", OBJPROP_XDISTANCE) == 110 && ObjectGetInteger(0, "GCP_r_bg", OBJPROP_YDISTANCE) == 80, "the background follows at once");
    long moved_x = ObjectGetInteger(0, "GCP_e_lot", OBJPROP_XDISTANCE), moved_y = ObjectGetInteger(0, "GCP_e_lot", OBJPROP_YDISTANCE);
-   p.Render(e, one, _Symbol, "", 0);
+   p.Render(e, one, "");
    Check(ObjectGetInteger(0, "GCP_e_lot", OBJPROP_XDISTANCE) == moved_x && ObjectGetInteger(0, "GCP_e_lot", OBJPROP_YDISTANCE) == moved_y,
          "moved boxes are exactly where a full redraw puts them");
    Check(!Shown("GCP_t_h_lot"), "no lot step text");
    p.Mouse(130, 90, false);
    Check(!p.Mouse(200, 200, false) && p.X() == 110, "released: it stays");
-   p.Mouse(140, 380, false);
-   p.Mouse(140, 380, true);
-   Check(!p.Mouse(200, 400, true) && p.X() == 110, "pressing on the form does not drag");
-   p.Mouse(200, 400, false);
+   p.Mouse(140, 200, false);
+   p.Mouse(140, 200, true);
+   Check(!p.Mouse(200, 220, true) && p.X() == 110, "pressing on the form does not drag");
+   p.Mouse(200, 220, false);
    p.Mouse(p.X() + wide - 20, p.Y() + 10, false);
    p.Mouse(p.X() + wide - 20, p.Y() + 10, true);
    Check(!p.Mouse(300, 300, true) && p.X() == 110, "pressing on the - button does not drag");
@@ -1000,11 +1118,11 @@ void TestDrag()
    Check(p.X() == 0 && p.Y() == 0, "can't be dragged off the chart");
    p.Mouse(-500, -500, false);
    Check((ChartGetInteger(0, CHART_MOUSE_SCROLL) != 0) == scroll, "mouse away: chart scrolling is restored");
-   p.Render(e, one, _Symbol, "", 0);
+   p.Render(e, one, "");
    Check(Shown("GCP_b_float") && ChartGetInteger(0, CHART_IS_DOCKED) != 0, "Float button, chart docked");
    p.ToggleFloat();
    Sleep(1000);
-   p.Render(e, one, _Symbol, "", 0);
+   p.Render(e, one, "");
    Check(ChartGetInteger(0, CHART_IS_DOCKED) == 0, "Float pops the chart out");
    Check(ChartGetInteger(0, CHART_WIDTH_IN_PIXELS) >= wide && p.X() == 0, "the window fits the panel: "
          + IntegerToString(ChartGetInteger(0, CHART_WIDTH_IN_PIXELS)) + " px for " + IntegerToString(wide));
@@ -1035,10 +1153,11 @@ void TestOpenTradePanel()
    sim.Spec(one.spec);
    CGcPanel v;
    v.Init(10, 20, 1, 0.01);
+   v.maxHeight = 0;   // draw everything (scrolling has its own test)
    OpenBuyCycle();
    v.SyncDraft(e.cfg);
    v.advanced = true;
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(Shown("GCP_e_otp") && !Shown("GCP_b_pick_otp") && !Shown("GCP_b_pick_trigger") && !Shown("GCP_b_bid") && Shown("GCP_e_trigger"), "cycle order 1: change-trade section and the form");
    Check(!Shown("GCP_b_setlv") && !Shown("GCP_b_apply") && !Shown("GCP_t_h_j") && !Shown("GCP_t_h_prev") && !Shown("GCP_t_h_log"),
          "no Set / Apply buttons, no journal, preview or log");
@@ -1046,23 +1165,23 @@ void TestOpenTradePanel()
    Check(Box("otp") == "4003.00" && Box("osl") == "", "boxes show order 1's TP, no SL: " + Box("otp") + " / " + Box("osl"));
    Snap("panel_cycle_advanced");
    Check(v.Typed(e, "otp", "4009", err) && err == "" && Near(sim.open[0].tp, 4009) && sim.open[0].sl == 0, "Enter in the TP box changes only the TP: " + err);
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(v.Typed(e, "osl", "3991", err) && err == "" && Near(sim.open[0].tp, 4009) && Near(sim.open[0].sl, 3991), "Enter in the SL box keeps the TP: " + err);
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(v.Typed(e, "otp", "3000", err) && err != "" && Near(sim.open[0].tp, 4009), "wrong side refused");
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(Box("otp") == "4009.00", "the refused box shows the real TP again: " + Box("otp"));
    Check(v.Typed(e, "otp", "40x", err) && err != "" && Near(sim.open[0].tp, 4009), "typo refused");
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(v.Typed(e, "osl", "", err) && err == "" && sim.open[0].sl == 0, "empty box + Enter removes the SL");
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(e.ModifyLevels(4008, 3990, err) && Near(sim.open[0].tp, 4008) && Near(sim.open[0].sl, 3990), "order 1: TP and SL changed");
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(Box("otp") == "4008.00" && Box("osl") == "3990.00", "boxes follow");
    Snap("panel_cycle_order1");
    Check(e.ModifyLevels(4003, 0, err), "SL removed again");
    Move(4003.1);
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(e.leg == 2 && Box("otp") == "" && Box("osl") == "4000.00", "order 2 shows its own SL, not order 1's values: " + Box("otp") + " / " + Box("osl"));
    Check(e.ModifyLevels(4020, 3995, err) && Near(sim.open[0].tp, 4020) && Near(sim.open[0].sl, 3995), "order 2: TP added, SL moved");
 
@@ -1070,45 +1189,45 @@ void TestOpenTradePanel()
    c.enter_now = true;
    Check(one.Arm(c, err), "single trade opened");
    v.tab = 1;
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(!Shown("GCP_b_setlv") && Shown("GCP_e_otp") && Shown("GCP_e_osl") && !Shown("GCP_b_pick_osl"), "single: TP / SL boxes, no Pick");
    Check(!Shown("GCP_e_tp") && !Shown("GCP_e_trigger") && !Shown("GCP_b_arm"), "single: the next-trade form is hidden");
    Check(Box("otp") == "" && Box("osl") == "", "no TP/SL yet");
    double bid = sim.bid;
    Check(one.ModifyLevels(bid + 10, bid - 10, err) && Near(sim.open[1].tp, bid + 10) && Near(sim.open[1].sl, bid - 10), "single: set on the trade");
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(Box("otp") == DoubleToString(bid + 10, 2), "box follows");
    Snap("panel_single_open");
    Check(one.ModifyLevels(0, 0, err) && sim.open[1].tp == 0 && sim.open[1].sl == 0, "single: both removed");
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    // typed but never sent, then a NEW trade: the old text must not be there
    v.draft[1].otp = "4100.00";
    ObjectSetString(0, "GCP_e_otp", OBJPROP_TEXT, "4100.00");
    one.StopNow(err); Wait(); one.Step(); sim.ms += 1100; one.Step();
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(Shown("GCP_e_trigger") && !Shown("GCP_e_otp"), "after closing: the form is back");
    Check(one.Arm(c, err), "next single trade");
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(Box("otp") == "" && v.draft[1].otp == "", "no left-over TP from the previous trade: '" + Box("otp") + "'");
 
    // TP / SL typed as points from the entry: BUY first
    double in = one.pos.price_open;
    v.SetOpenPoints(true);
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(Shown("GCP_b_oprice") && Shown("GCP_b_opoints"), "Price / Points switch");
    Check(v.Typed(one, "otp", "5", err) && err == "" && Near(one.cur_tp, in + 5), "BUY: TP 5 points is 5.00 above the entry: " + err);
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(Box("otp") == "5", "box shows points: " + Box("otp"));
    Check(v.Typed(one, "osl", "4", err) && err == "" && Near(one.cur_sl, in - 4) && Near(one.cur_tp, in + 5), "BUY: SL 4 points below, TP kept: " + err);
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(v.Typed(one, "osl", "99999", err) && err != "" && Near(one.cur_sl, in - 4), "points past price 0 refused, SL not removed");
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(v.Typed(one, "otp", "abc", err) && err != "" && Near(one.cur_tp, in + 5), "points typo refused");
    v.SetOpenPoints(false);
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(Box("otp") == DoubleToString(in + 5, 2) && Box("osl") == DoubleToString(in - 4, 2), "back to prices: " + Box("otp"));
    v.SetOpenPoints(true);
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(v.Typed(one, "osl", "", err) && err == "" && one.cur_sl == 0, "empty removes it in points too");
 
    // SELL: the other way round, and a negative SL locks in profit
@@ -1116,15 +1235,15 @@ void TestOpenTradePanel()
    c.dir = GC_SELL;
    Check(one.Arm(c, err), "SELL single opened: " + err);
    in = one.pos.price_open;
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(v.Typed(one, "otp", "20", err) && err == "" && Near(one.cur_tp, in - 20), "SELL: TP points below the entry: " + err);
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(v.Typed(one, "osl", "3", err) && err == "" && Near(one.cur_sl, in + 3), "SELL: SL points above the entry: " + err);
    sim.Price(sim.bid - 5);
    one.Step();
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(v.Typed(one, "osl", "-1", err) && err == "" && Near(one.cur_sl, in - 1), "SELL: SL -1 is 1 point in profit: " + err);
-   v.Render(e, one, _Symbol, "", 0);
+   v.Render(e, one, "");
    Check(Box("osl") == "-1", "box shows it: " + Box("osl"));
    Snap("panel_single_points");
    v.SetOpenPoints(false);
@@ -1146,6 +1265,8 @@ void OnStart()
    TestOpenTradePanel();
    TestDrag();
    TestBuyNow();
+   TestScroll();
+   TestHelp();
    Out("RESULT: " + IntegerToString(g_pass) + " passed, " + IntegerToString(g_fail) + " failed");
    if(g_file != INVALID_HANDLE)
       FileClose(g_file);

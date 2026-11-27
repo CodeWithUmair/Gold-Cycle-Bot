@@ -13,6 +13,8 @@ the gold chart, with the same trading rules as the dashboard bot.
 6. Click the **Algo Trading** button at the top of MetaTrader so it turns **green**.
 
 The panel appears at the top left of the chart. **Drag it by its title** to move it (the place is remembered).
+**?** opens a help page inside the panel that explains every item.
+A panel longer than its space scrolls: mouse wheel, or the bar on its right.
 **Float** pops the chart with the panel out as its own window, which can be dragged outside MetaTrader or to another
 screen; **Dock** puts it back. (MetaTrader can't draw a panel without a chart behind it.) The
 chart needs to be about 720 pixels tall for the tallest view; the **-** button folds the panel up.

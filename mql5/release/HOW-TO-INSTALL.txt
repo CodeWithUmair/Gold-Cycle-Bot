@@ -20,8 +20,11 @@ INSTALL (once)
 
 The panel appears on the chart. It should say DEMO and show no red message.
 To move it, drag it by its top part (the title) with the mouse.
+If the panel is long, scroll it with the mouse wheel or the bar on its right.
 To take it outside MetaTrader (or to a second screen), press "Float", then
 drag that window by its top bar. "Dock" puts it back.
+
+Press "?" on the panel: it explains every box and button.
 
 USE
 Point = 1.00 of price (4000 to 4003 is 3 points). Start with lot 0.01.

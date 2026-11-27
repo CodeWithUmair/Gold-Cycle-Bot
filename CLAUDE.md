@@ -340,6 +340,10 @@ Confirmed:
 - (2026-11-27) EA **Buy/Sell now opens with the TP/SL typed in the Single form** (empty = none; points count from the
   fill). Replaces the 2026-11-20 "opens with no TP/SL" for the EA. The web dashboard is no longer wanted by the
   user and keeps the old behaviour.
+- (2026-11-27) EA panel: simple top (title, tabs, small status box; no account / balance / bot-state lines or
+  session / day P/L). Longer than 520 px or the chart: it scrolls (wheel or its own scroll bar).
+- (2026-11-27) EA panel: **?** opens a help page in the panel that explains every item. A new or changed field /
+  button must be added there too (`CGcPanel::Help`).
 
 ---
 

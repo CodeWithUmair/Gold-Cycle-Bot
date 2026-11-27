@@ -30,8 +30,6 @@ CGcPanel   g_panel;
 bool       g_loaded = false;
 bool       g_autoPending = false;
 long       g_login = 0;
-double     g_today = 0;
-ulong      g_todayAt = 0;
 ulong      g_renderAt = 0;
 
 string FileFor(const string what, const string ext)
@@ -267,24 +265,18 @@ void Draw()
       return;
      }
    Comment("");
-   ulong now = GetTickCount64();
-   if(g_todayAt == 0 || now - g_todayAt > 3000)
-     {
-      g_today = g_broker.RealizedToday(InpMagic, InpMagic + 1);
-      g_todayAt = now;
-     }
    string warning = "";
    if(!g_broker.Connected())
       warning = "NOT CONNECTED to the broker: the bot is paused";
    else
       warning = g_broker.TradeBlockReason();
-   g_panel.Render(GetPointer(g_cycle), GetPointer(g_single), _Symbol, warning, g_today);
+   g_panel.Render(GetPointer(g_cycle), GetPointer(g_single), warning);
    if(g_panel.tab == 0)
       g_panel.Lines(GetPointer(g_cycle));
    else
       g_panel.Lines(GetPointer(g_single));
    ChartRedraw();
-   g_renderAt = now;
+   g_renderAt = GetTickCount64();
   }
 
 //------------------------------------------------------------------ events
@@ -300,6 +292,8 @@ int OnInit()
    MathSrand((uint)GetTickCount());
    g_broker.SetSymbol(_Symbol);
    g_panel.Init(InpPanelX, InpPanelY, InpMagic, InpDefaultLot);
+   if(InpTestHooks)
+      g_panel.maxHeight = 0;   // the test script types into every box, so all of them must exist
    g_loaded = false;
    g_autoPending = false;
    TryLoad();
@@ -338,7 +332,6 @@ void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest 
    if(trans.type == TRADE_TRANSACTION_DEAL_ADD && g_loaded)
      {
       Run();
-      g_todayAt = 0;
       Draw();
      }
   }
@@ -348,23 +341,6 @@ bool Confirm(const string question)
    if(InpTestHooks)
       return true;
    return MessageBox(question, "GoldCycle", MB_YESNO | MB_ICONQUESTION) == IDYES;
-  }
-
-void ShowHelp()
-  {
-   MessageBox("CYCLE\n1. Choose BUY or SELL, the trigger price, the lot and TP points (1 point = 1.00 of price).\n"
-              + "2. Start. When the price touches the trigger, order 1 opens with a TP and no SL.\n"
-              + "3. When order 1 hits TP, order 2 opens at once: SL at order 1's entry, no TP.\n"
-              + "4. When order 2 hits its SL, the next cycle waits at the entry (plus the gap, if set).\n"
-              + "It stops at the stop price, max cycles, daily loss limit, or when you stop it.\n\n"
-              + "SINGLE\nOne trade at the trigger price, or BUY / SELL now. TP and SL are optional:\n"
-              + "both use the values in the TP and SL boxes (empty = none).\n\n"
-              + "Open trade: type TP / SL as a price or as points from the entry, then press Enter.\n"
-              + "You can also drag the lines on the chart.\n"
-              + "A running cycle also takes a changed value when you press Enter.\n"
-              + "Move this panel by dragging its title. Float pops it out of MetaTrader as its own window.\n"
-              + "Order 1 has no SL: use a stop price and/or a daily loss limit.\n"
-              + "Close all and stop: the red button, or Ctrl+Shift+K for both bots.", "GoldCycle: how it works", MB_OK | MB_ICONINFORMATION);
   }
 
 void Report(const bool ok, const string err)
@@ -397,8 +373,8 @@ void Click(const string id)
    string err = "";
    string errors[];
    SConfig c;
-   if(id == "help")
-      ShowHelp();
+   if(id == "help" || id == "back")
+      g_panel.ToggleHelp();
    else if(id == "float")
       g_panel.ToggleFloat();
    else if(id == "collapse")
@@ -406,6 +382,7 @@ void Click(const string id)
    else if(id == "tab0" || id == "tab1")
      {
       g_panel.tab = id == "tab1" ? 1 : 0;
+      g_panel.ScrollTop();
       g_panel.Message("", C_MUTED);
       g_panel.forceText = true;
       ObjectsDeleteAll(0, "GCP_e_");
@@ -479,9 +456,17 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
   {
    if(!g_loaded)
       return;
-   if(id == CHARTEVENT_MOUSE_MOVE)   // dragging the panel (very frequent: nothing else runs here)
+   if(id == CHARTEVENT_MOUSE_MOVE)   // dragging the panel or its scroll bar (very frequent: nothing else runs here)
      {
       g_panel.Mouse((int)lparam, (int)dparam, (StringToInteger(sparam) & 1) != 0);
+      if(g_panel.redraw)
+         Draw();
+      return;
+     }
+   if(id == CHARTEVENT_MOUSE_WHEEL)   // lparam packs the mouse position, dparam is the wheel step
+     {
+      if(g_panel.Wheel((int)(short)lparam, (int)(short)(lparam >> 16), (int)dparam))
+         Draw();
       return;
      }
    int ev = id;

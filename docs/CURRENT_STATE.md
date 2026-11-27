@@ -17,6 +17,11 @@
 - Client package: `mql5/release/GoldCycle.ex5` + `HOW-TO-INSTALL.txt` (zipped to the Desktop as `GoldCycle-Bot.zip`).
 - Still only testable by hand: mouse dragging, Float + dragging the window out, the real Enter key (the live script
   types through the test hook): MANUAL_TEST B1, B3, B10-B12.
+- After that: **simpler top** (title, tabs, small status box) and a **scroll bar** (wheel or drag) when the panel is
+  longer than 520 px or the chart. **Offline tests 301 passed.** Live demo tests not rerun for this. The client zip on the
+  Desktop was rebuilt with it.
+- Then: **"?" opens a help page in the panel** explaining every item. **Offline tests 328 passed.** This version is in
+  the client zip and pushed to branch `ea-panel-2026-11-27` (not merged to `main`).
 - Sections below that mention Pick / Set / Apply / preview / log describe the older panel.
 
 ## Right now (2026-11-26, about 03:00 local): where the manual test stood
