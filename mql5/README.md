@@ -12,8 +12,10 @@ the gold chart, with the same trading rules as the dashboard bot.
 5. In the window that opens, tab **Common**: tick **Allow Algo Trading**. Press **OK**.
 6. Click the **Algo Trading** button at the top of MetaTrader so it turns **green**.
 
-The panel appears at the top left of the chart. The chart needs to be about 700 pixels tall; the **-** button hides
-the panel.
+The panel appears at the top left of the chart. **Drag it by its title** to move it (the place is remembered).
+**Float** pops the chart with the panel out as its own window, which can be dragged outside MetaTrader or to another
+screen; **Dock** puts it back. (MetaTrader can't draw a panel without a chart behind it.) The
+chart needs to be about 720 pixels tall for the tallest view; the **-** button folds the panel up.
 
 ## Use
 
@@ -24,20 +26,23 @@ and stop price, then **Start cycle**.
 2. Order 1 hits TP: order 2 opens at once, **SL at order 1's entry**, no TP.
 3. Order 2 hits SL: the next cycle waits at the entry (plus the gap, if set).
 
-While it runs you can change fields and press **Apply changes** (the direction is fixed), **Stop after cycle**, **Stop now**
-(an open trade stays open with its TP/SL) or **Close all and stop**.
+While it runs, type a new value and press **Enter**: it is applied at once (the direction is fixed; clicking elsewhere
+after typing applies it too). A refused value goes back to the one in effect. Buttons: **Stop after cycle**, **Stop now**
+(an open trade stays open with its TP/SL) and **Close all and stop**. A Single trade still waiting at its trigger can't
+be changed: **Cancel** it and start again.
 
-**Single tab**: one trade. **BUY now / SELL now** (opens with no TP/SL), or **Start at trigger price** with optional TP
+**Single tab**: one trade. **BUY now / SELL now**, or **Start at trigger price**; both use the optional TP
 and SL, in points or exact prices. **Close trade** closes it.
 
-**Open trade**: under **Change THIS open trade** type the TP / SL prices (or **Pick** them on the chart) and press
-**Set TP / SL on this trade**, or drag the TP/SL lines on the chart as usual in MetaTrader. An empty box removes it. The bot
-follows your change. In a cycle, order 2 opens where order 1's TP actually is.
+**Open trade**: under **Change THIS open trade** choose **Price** or **Points** (the distance from the trade's entry;
+a negative SL, such as -2, puts it on the profit side), type TP or SL and press **Enter**,
+or drag the TP/SL lines on the chart as usual in MetaTrader. An empty box removes it. The bot follows your change. In a
+cycle, order 2 opens where order 1's TP actually is.
 
-**Safety and advanced**: max cycles, daily loss limit, max spread, max slippage, trading hours (PC time), trigger on
-Bid/Ask/Mid, levels from the planned price or the fill.
+**Safety and advanced**: max cycles, daily loss limit, max spread, max slippage, trading hours (PC time). The trigger
+watches the Bid price and TP/SL are calculated from the planned price.
 
-**Pick** puts the price you click on the chart into a field. **?** explains the rules. **Ctrl+Shift+K** closes
+**?** explains the rules. **Ctrl+Shift+K** closes
 everything for both bots.
 
 Cycle and Single run at the same time. Order 1 has no SL, so set a **stop price** and/or a **daily loss limit**.
@@ -50,7 +55,7 @@ Cycle and Single run at the same time. Order 1 has no SL, so set a **stop price*
   timeframe or the bot's settings does not stop it.
 - Closing a bot trade **by hand** in MetaTrader stops that bot (it never fights you).
 - **History**: MetaTrader's History tab, plus a spreadsheet file `MQL5\Files\GoldCycle\journal_<account>_<symbol>_<magic>.csv`.
-- **Messages**: the panel's log and MetaTrader's **Experts** tab. Phone alerts: set `InpPushToPhone = true` in the bot's
+- **Messages**: MetaTrader's **Experts** tab (problems also pop up as alerts). Phone alerts: set `InpPushToPhone = true` in the bot's
   settings and enter your MetaQuotes ID in Tools > Options > Notifications.
 - **Several accounts**: install MetaTrader once per account (separate folders), log each one in, and put the bot on
   each one's gold chart.

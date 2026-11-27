@@ -326,6 +326,20 @@ Confirmed:
 - (2026-11-25) Client wants the bot **inside MT5**: one Expert Advisor (`mql5/`) with an on-chart panel for Cycle and
   Single, same rules and settings. Rules changed in either implementation must be changed in both (or the Python one
   explicitly retired). MQL5 coding: engine depends only on `CBroker`; `OrderSend` only in `Broker.mqh`.
+- (2026-11-27) EA panel: draggable by its title; one column with no journal, preview or log; **Enter applies** a typed
+  value at once to a running cycle and to the open trade's TP/SL (no "Apply changes" / "Discard" / "Set" buttons).
+  A Single trade waiting at its trigger can't be edited (Cancel and start again). UI only: trading rules unchanged,
+  the web dashboard is not changed.
+- (2026-11-27) EA panel: **no Pick buttons / click-on-chart** (replaces the 2026-11-20 picking, EA only). Levels are
+  typed + Enter, or dragged as MetaTrader's own lines.
+- (2026-11-27) EA panel: **Float / Dock** button undocks the chart (`CHART_IS_DOCKED`) so the bot window can be dragged
+  outside MetaTrader. No lot-step hint beside Lot. No **Bid** button beside the trigger price.
+  No "Trigger on" / "Levels from" buttons: the EA panel always uses the defaults (Bid, planned).
+- (2026-11-27) EA open trade TP/SL: **Price or Points** switch. Points are measured from the trade's fill price
+  (TP on the profit side, SL on the loss side; negative = the other side).
+- (2026-11-27) EA **Buy/Sell now opens with the TP/SL typed in the Single form** (empty = none; points count from the
+  fill). Replaces the 2026-11-20 "opens with no TP/SL" for the EA. The web dashboard is no longer wanted by the
+  user and keeps the old behaviour.
 
 ---
 

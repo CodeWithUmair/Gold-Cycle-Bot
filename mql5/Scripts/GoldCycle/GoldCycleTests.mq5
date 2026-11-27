@@ -903,7 +903,9 @@ void TestPanel()
    p.draft[0].hours = " 08:00-17:00 "; Check(Good(p, 0), "spaces trimmed");
 
    p.draft[1].trigger = "abc"; p.draft[1].tp = "zz";
-   Check(Good(p, 1, true), "Buy now ignores the trigger and TP boxes");
+   Check(Bad(p, 1, "not a number", true), "Buy now never ignores a typo in TP");
+   p.draft[1].tp = "";
+   Check(Good(p, 1, true), "Buy now ignores the trigger box");
    p.draft[1].lot = ""; Check(Bad(p, 1, "lot", true), "Buy now still needs a lot");
    p.draft[1].lot = "0.01"; p.draft[1].trigger = "4000"; p.draft[1].tp = ""; p.draft[1].sl = "";
    Check(Good(p, 1), "single with neither TP nor SL");
@@ -916,10 +918,102 @@ void TestPanel()
    SConfig run = Cfg(GC_CYCLE, GC_BUY, 4000, 3); run.gap = 2; run.stop_price = 3990; run.max_cycles = 3; run.hours = "08:00-17:00";
    Arm(run);
    p.SyncDraft(e.cfg);
-   Check(!p.Differs(e), "form equals the running cycle: no Apply button");
-   p.draft[0].tp = "4"; Check(p.Differs(e), "a change offers Apply");
-   p.draft[0].tp = "3.0"; Check(!p.Differs(e), "3.0 is the same as 3");
+   string err = "";
+   Check(!p.Typed(e, "tp", "3", err), "Enter on an unchanged value does nothing");
+   Check(p.Typed(e, "tp", "4", err) && err == "" && Near(e.cfg.tp_points, 4), "Enter applies to a running cycle: " + err);
+   Check(p.Typed(e, "tp", "abc", err) && err != "" && Near(e.cfg.tp_points, 4) && p.draft[0].tp == "4", "a typo is refused and the box goes back");
+   Check(p.Typed(e, "stop", "4000", err) && err != "" && Near(e.cfg.stop_price, 3990) && p.draft[0].stop == "3990", "a refused value changes nothing");
+
+   CEngine *one = new CEngine();
+   one.Init(sim, sink, GC_SINGLE, 101, 100);
+   sim.Spec(one.spec);
+   SConfig far = Cfg(GC_SINGLE, GC_BUY, 4010, 3);
+   Check(one.Arm(far, err), "single waiting at its trigger");
+   p.SyncDraft(one.cfg);
+   Check(p.Typed(one, "lot", "0.02", err) && err != "" && p.draft[1].lot == "0.01" && Near(one.cfg.lot, 0.01), "a waiting Single trade can't be changed");
+   delete one;
    p.Remove();
+  }
+
+//================================================================ Buy / Sell now takes the TP / SL boxes
+bool Now(CGcPanel &p, const int dir, const string tp, const string sl, const bool exact = false)
+  {
+   Fresh("Buy / Sell now with TP / SL", 4000, GC_SINGLE);
+   p.draft[1].dir = dir; p.draft[1].trigger = "abc"; p.draft[1].tp = tp; p.draft[1].sl = sl; p.draft[1].price_input = exact;
+   SConfig c;
+   string errors[], err = "";
+   p.BuildConfig(GC_SINGLE, true, c, errors);
+   if(ArraySize(errors) > 0 || !e.Arm(c, err))
+      return false;
+   e.Step();
+   return e.hasPos;
+  }
+
+void TestBuyNow()
+  {
+   CGcPanel p;
+   p.Init(10, 20, 1, 0.01);
+   Check(Now(p, GC_BUY, "6", "3") && Near(sim.open[0].tp, e.pos.price_open + 6) && Near(sim.open[0].sl, e.pos.price_open - 3),
+         "BUY now: TP 6 / SL 3 points from the fill");
+   Check(Now(p, GC_SELL, "6", "") && Near(sim.open[0].tp, e.pos.price_open - 6) && sim.open[0].sl == 0, "SELL now: TP only");
+   Check(Now(p, GC_SELL, "", "4") && sim.open[0].tp == 0 && Near(sim.open[0].sl, e.pos.price_open + 4), "SELL now: SL only");
+   Check(Now(p, GC_BUY, "4010", "3990", true) && Near(sim.open[0].tp, 4010) && Near(sim.open[0].sl, 3990), "BUY now: exact prices as typed");
+   Check(!Now(p, GC_BUY, "3990", "", true) && ArraySize(sim.open) == 0, "BUY now: TP on the wrong side opens nothing");
+   Check(!Now(p, GC_BUY, "x", "") && ArraySize(sim.open) == 0, "BUY now: a typo opens nothing");
+   Check(Now(p, GC_BUY, "", "") && sim.open[0].tp == 0 && sim.open[0].sl == 0, "BUY now: empty boxes = no TP / SL");
+  }
+
+//================================================================ dragging the panel
+void TestDrag()
+  {
+   Fresh("drag the panel by its title", 4000);
+   CEngine *one = new CEngine();
+   one.Init(sim, sink, GC_SINGLE, 101, 100);
+   sim.Spec(one.spec);
+   bool scroll = ChartGetInteger(0, CHART_MOUSE_SCROLL) != 0;
+   CGcPanel p;
+   p.Init(10, 20, 1, 0.01);
+   p.Render(e, one, _Symbol, "", 0);
+   int wide = (int)MathRound(p.width * TerminalInfoInteger(TERMINAL_SCREEN_DPI) / 96.0);
+   Check(!p.Mouse(30, 30, false) && ChartGetInteger(0, CHART_MOUSE_SCROLL) == 0, "mouse over the panel: the chart does not scroll");
+   Check(!p.Mouse(30, 30, true), "pressed, not moved yet");
+   Check(p.Mouse(130, 90, true) && p.X() == 110 && p.Y() == 80, "dragged by the title: " + IntegerToString(p.X()) + "," + IntegerToString(p.Y()));
+   Check(ObjectGetInteger(0, "GCP_r_bg", OBJPROP_XDISTANCE) == 110 && ObjectGetInteger(0, "GCP_r_bg", OBJPROP_YDISTANCE) == 80, "the background follows at once");
+   long moved_x = ObjectGetInteger(0, "GCP_e_lot", OBJPROP_XDISTANCE), moved_y = ObjectGetInteger(0, "GCP_e_lot", OBJPROP_YDISTANCE);
+   p.Render(e, one, _Symbol, "", 0);
+   Check(ObjectGetInteger(0, "GCP_e_lot", OBJPROP_XDISTANCE) == moved_x && ObjectGetInteger(0, "GCP_e_lot", OBJPROP_YDISTANCE) == moved_y,
+         "moved boxes are exactly where a full redraw puts them");
+   Check(!Shown("GCP_t_h_lot"), "no lot step text");
+   p.Mouse(130, 90, false);
+   Check(!p.Mouse(200, 200, false) && p.X() == 110, "released: it stays");
+   p.Mouse(140, 380, false);
+   p.Mouse(140, 380, true);
+   Check(!p.Mouse(200, 400, true) && p.X() == 110, "pressing on the form does not drag");
+   p.Mouse(200, 400, false);
+   p.Mouse(p.X() + wide - 20, p.Y() + 10, false);
+   p.Mouse(p.X() + wide - 20, p.Y() + 10, true);
+   Check(!p.Mouse(300, 300, true) && p.X() == 110, "pressing on the - button does not drag");
+   p.Mouse(300, 300, false);
+   p.Mouse(130, 90, false);
+   p.Mouse(130, 90, true);
+   p.Mouse(-500, -500, true);
+   Check(p.X() == 0 && p.Y() == 0, "can't be dragged off the chart");
+   p.Mouse(-500, -500, false);
+   Check((ChartGetInteger(0, CHART_MOUSE_SCROLL) != 0) == scroll, "mouse away: chart scrolling is restored");
+   p.Render(e, one, _Symbol, "", 0);
+   Check(Shown("GCP_b_float") && ChartGetInteger(0, CHART_IS_DOCKED) != 0, "Float button, chart docked");
+   p.ToggleFloat();
+   Sleep(1000);
+   p.Render(e, one, _Symbol, "", 0);
+   Check(ChartGetInteger(0, CHART_IS_DOCKED) == 0, "Float pops the chart out");
+   Check(ChartGetInteger(0, CHART_WIDTH_IN_PIXELS) >= wide && p.X() == 0, "the window fits the panel: "
+         + IntegerToString(ChartGetInteger(0, CHART_WIDTH_IN_PIXELS)) + " px for " + IntegerToString(wide));
+   Check(ObjectGetString(0, "GCP_b_float", OBJPROP_TEXT) == "Dock", "button now says Dock");
+   p.ToggleFloat();
+   Sleep(1000);
+   Check(ChartGetInteger(0, CHART_IS_DOCKED) != 0, "Dock puts it back");
+   p.Remove();
+   delete one;
   }
 
 //================================================================ changing the open trade, as drawn on the panel
@@ -945,8 +1039,23 @@ void TestOpenTradePanel()
    v.SyncDraft(e.cfg);
    v.advanced = true;
    v.Render(e, one, _Symbol, "", 0);
-   Check(Shown("GCP_b_setlv") && Shown("GCP_b_pick_otp") && Shown("GCP_e_trigger"), "cycle order 1: change-trade section and the form");
+   Check(Shown("GCP_e_otp") && !Shown("GCP_b_pick_otp") && !Shown("GCP_b_pick_trigger") && !Shown("GCP_b_bid") && Shown("GCP_e_trigger"), "cycle order 1: change-trade section and the form");
+   Check(!Shown("GCP_b_setlv") && !Shown("GCP_b_apply") && !Shown("GCP_t_h_j") && !Shown("GCP_t_h_prev") && !Shown("GCP_t_h_log"),
+         "no Set / Apply buttons, no journal, preview or log");
+   Check(Shown("GCP_e_hours") && !Shown("GCP_b_tside") && !Shown("GCP_b_anchor"), "advanced: hours, no Trigger on / Levels from buttons");
    Check(Box("otp") == "4003.00" && Box("osl") == "", "boxes show order 1's TP, no SL: " + Box("otp") + " / " + Box("osl"));
+   Snap("panel_cycle_advanced");
+   Check(v.Typed(e, "otp", "4009", err) && err == "" && Near(sim.open[0].tp, 4009) && sim.open[0].sl == 0, "Enter in the TP box changes only the TP: " + err);
+   v.Render(e, one, _Symbol, "", 0);
+   Check(v.Typed(e, "osl", "3991", err) && err == "" && Near(sim.open[0].tp, 4009) && Near(sim.open[0].sl, 3991), "Enter in the SL box keeps the TP: " + err);
+   v.Render(e, one, _Symbol, "", 0);
+   Check(v.Typed(e, "otp", "3000", err) && err != "" && Near(sim.open[0].tp, 4009), "wrong side refused");
+   v.Render(e, one, _Symbol, "", 0);
+   Check(Box("otp") == "4009.00", "the refused box shows the real TP again: " + Box("otp"));
+   Check(v.Typed(e, "otp", "40x", err) && err != "" && Near(sim.open[0].tp, 4009), "typo refused");
+   v.Render(e, one, _Symbol, "", 0);
+   Check(v.Typed(e, "osl", "", err) && err == "" && sim.open[0].sl == 0, "empty box + Enter removes the SL");
+   v.Render(e, one, _Symbol, "", 0);
    Check(e.ModifyLevels(4008, 3990, err) && Near(sim.open[0].tp, 4008) && Near(sim.open[0].sl, 3990), "order 1: TP and SL changed");
    v.Render(e, one, _Symbol, "", 0);
    Check(Box("otp") == "4008.00" && Box("osl") == "3990.00", "boxes follow");
@@ -961,10 +1070,9 @@ void TestOpenTradePanel()
    c.enter_now = true;
    Check(one.Arm(c, err), "single trade opened");
    v.tab = 1;
-   v.picking = "tp";
    v.Render(e, one, _Symbol, "", 0);
-   Check(Shown("GCP_b_setlv") && Shown("GCP_e_otp") && Shown("GCP_e_osl") && Shown("GCP_b_pick_osl"), "single: TP / SL boxes, Pick and Set");
-   Check(!Shown("GCP_e_tp") && !Shown("GCP_e_trigger") && !Shown("GCP_b_arm") && v.picking == "", "single: the next-trade form is hidden, its Pick cancelled");
+   Check(!Shown("GCP_b_setlv") && Shown("GCP_e_otp") && Shown("GCP_e_osl") && !Shown("GCP_b_pick_osl"), "single: TP / SL boxes, no Pick");
+   Check(!Shown("GCP_e_tp") && !Shown("GCP_e_trigger") && !Shown("GCP_b_arm"), "single: the next-trade form is hidden");
    Check(Box("otp") == "" && Box("osl") == "", "no TP/SL yet");
    double bid = sim.bid;
    Check(one.ModifyLevels(bid + 10, bid - 10, err) && Near(sim.open[1].tp, bid + 10) && Near(sim.open[1].sl, bid - 10), "single: set on the trade");
@@ -982,6 +1090,44 @@ void TestOpenTradePanel()
    Check(one.Arm(c, err), "next single trade");
    v.Render(e, one, _Symbol, "", 0);
    Check(Box("otp") == "" && v.draft[1].otp == "", "no left-over TP from the previous trade: '" + Box("otp") + "'");
+
+   // TP / SL typed as points from the entry: BUY first
+   double in = one.pos.price_open;
+   v.SetOpenPoints(true);
+   v.Render(e, one, _Symbol, "", 0);
+   Check(Shown("GCP_b_oprice") && Shown("GCP_b_opoints"), "Price / Points switch");
+   Check(v.Typed(one, "otp", "5", err) && err == "" && Near(one.cur_tp, in + 5), "BUY: TP 5 points is 5.00 above the entry: " + err);
+   v.Render(e, one, _Symbol, "", 0);
+   Check(Box("otp") == "5", "box shows points: " + Box("otp"));
+   Check(v.Typed(one, "osl", "4", err) && err == "" && Near(one.cur_sl, in - 4) && Near(one.cur_tp, in + 5), "BUY: SL 4 points below, TP kept: " + err);
+   v.Render(e, one, _Symbol, "", 0);
+   Check(v.Typed(one, "osl", "99999", err) && err != "" && Near(one.cur_sl, in - 4), "points past price 0 refused, SL not removed");
+   v.Render(e, one, _Symbol, "", 0);
+   Check(v.Typed(one, "otp", "abc", err) && err != "" && Near(one.cur_tp, in + 5), "points typo refused");
+   v.SetOpenPoints(false);
+   v.Render(e, one, _Symbol, "", 0);
+   Check(Box("otp") == DoubleToString(in + 5, 2) && Box("osl") == DoubleToString(in - 4, 2), "back to prices: " + Box("otp"));
+   v.SetOpenPoints(true);
+   v.Render(e, one, _Symbol, "", 0);
+   Check(v.Typed(one, "osl", "", err) && err == "" && one.cur_sl == 0, "empty removes it in points too");
+
+   // SELL: the other way round, and a negative SL locks in profit
+   one.StopNow(err); Wait(); one.Step(); sim.ms += 1100; one.Step();
+   c.dir = GC_SELL;
+   Check(one.Arm(c, err), "SELL single opened: " + err);
+   in = one.pos.price_open;
+   v.Render(e, one, _Symbol, "", 0);
+   Check(v.Typed(one, "otp", "20", err) && err == "" && Near(one.cur_tp, in - 20), "SELL: TP points below the entry: " + err);
+   v.Render(e, one, _Symbol, "", 0);
+   Check(v.Typed(one, "osl", "3", err) && err == "" && Near(one.cur_sl, in + 3), "SELL: SL points above the entry: " + err);
+   sim.Price(sim.bid - 5);
+   one.Step();
+   v.Render(e, one, _Symbol, "", 0);
+   Check(v.Typed(one, "osl", "-1", err) && err == "" && Near(one.cur_sl, in - 1), "SELL: SL -1 is 1 point in profit: " + err);
+   v.Render(e, one, _Symbol, "", 0);
+   Check(Box("osl") == "-1", "box shows it: " + Box("osl"));
+   Snap("panel_single_points");
+   v.SetOpenPoints(false);
    v.Remove();
    delete one;
   }
@@ -998,6 +1144,8 @@ void OnStart()
    TestEdges();
    TestPanel();
    TestOpenTradePanel();
+   TestDrag();
+   TestBuyNow();
    Out("RESULT: " + IntegerToString(g_pass) + " passed, " + IntegerToString(g_fail) + " failed");
    if(g_file != INVALID_HANDLE)
       FileClose(g_file);

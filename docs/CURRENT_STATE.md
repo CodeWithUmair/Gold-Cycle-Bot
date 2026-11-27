@@ -1,9 +1,25 @@
 # CURRENT STATE: read this first (new session / new machine)
 
-**Last updated:** 2026-11-26 (Session 9: edge testing). Then read [../HANDOFF.md](../HANDOFF.md) (history) and
+**Last updated:** 2026-11-27 (Session 10: panel changes, below; Session 9 notes follow). Then read [../HANDOFF.md](../HANDOFF.md) (history) and
 [../CLAUDE.md](../CLAUDE.md) (trading rules, source of truth).
 
-## Right now (2026-11-26, about 03:00 local): continue from here
+## Session 10 (2026-11-27): panel changes
+
+- Panel: draggable by its title (position saved), one column, **journal / preview / log removed**, **Pick, Bid, Trigger-on and
+  Levels-from buttons and the lot-step hint removed**, **Enter applies** a typed value to a running cycle or the open trade (no Apply / Discard /
+  Set buttons), **Float / Dock** pops the chart out of MetaTrader. Dragging moves the objects instead of redrawing
+  (one step 4.1 ms -> 0.1 ms in a test script). Engine unchanged.
+- Open trade TP / SL can be typed as a **Price or as Points** from the entry. **BUY / SELL now uses the form's TP / SL**
+  (before, it always opened with none).
+- **Final test of this version: engine + panel tests 290 passed, 0 failed; live demo 474902598: 54 passed, 0 failed**
+  (full 32, buttons 14, restart/resume 8), and the M1 -> M5 switch kept the trade IN POSITION. The test copy used magic
+  8800601 / 8800602 (changed only in that copy) so the user's own bot could not see its trades; none left open.
+- Client package: `mql5/release/GoldCycle.ex5` + `HOW-TO-INSTALL.txt` (zipped to the Desktop as `GoldCycle-Bot.zip`).
+- Still only testable by hand: mouse dragging, Float + dragging the window out, the real Enter key (the live script
+  types through the test hook): MANUAL_TEST B1, B3, B10-B12.
+- Sections below that mention Pick / Set / Apply / preview / log describe the older panel.
+
+## Right now (2026-11-26, about 03:00 local): where the manual test stood
 
 **The user is part-way through the manual test** ([MANUAL_TEST.md](MANUAL_TEST.md)). Session 9 is committed and pushed.
 
@@ -117,7 +133,7 @@ confirm boxes, help, collapse, second-chart guard, disconnect and screen scaling
 ## Running the automated tests again
 
 - **Engine tests (no orders):** after `build.ps1`, drag script `GoldCycle > GoldCycleTests` onto any chart. Experts tab:
-  `RESULT: 242 passed, 0 failed` (also in `MQL5\Files\GoldCycle\test_results.txt`).
+  `RESULT: 290 passed, 0 failed` (also in `MQL5\Files\GoldCycle\test_results.txt`).
 - **Live test (demo only, real 0.01 orders, refuses real accounts):** attach the EA with input
   `InpTestHooks = true`, then run script `GoldCycleLiveTest` on the **same chart**. Results and screenshots in
   `MQL5\Files\GoldCycle\`. Restart check: create `restart_open.txt` there, run; restart MetaTrader; replace it with

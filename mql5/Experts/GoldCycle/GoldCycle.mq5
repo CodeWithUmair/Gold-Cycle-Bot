@@ -45,7 +45,6 @@ public:
    virtual void      Event(const string level, const string msg, const bool toast) override
      {
       Print("GoldCycle ", level, ": ", msg);
-      g_panel.Log(level, msg);
       if(!toast)
          return;
       if(InpPopupAlerts && level != "info")
@@ -154,13 +153,15 @@ void SaveForm()
    GcAdd(lines, "tab=" + IntegerToString(g_panel.tab));
    GcAdd(lines, "collapsed=" + IntegerToString(g_panel.collapsed));
    GcAdd(lines, "advanced=" + IntegerToString(g_panel.advanced));
+   GcAdd(lines, "openpoints=" + IntegerToString(g_panel.openPoints));
+   GcAdd(lines, "pos=" + IntegerToString(g_panel.X()) + "|" + IntegerToString(g_panel.Y()));   // where it was dragged to
    for(int i = 0; i < 2; i++)
      {
       SDraft d;
       d = g_panel.draft[i];
       GcAdd(lines, "form=" + IntegerToString(i) + "|" + IntegerToString(d.dir) + "|" + d.trigger + "|" + d.lot + "|" + d.tp + "|" + d.sl + "|" + d.gap
-            + "|" + d.stop + "|" + d.maxc + "|" + d.dloss + "|" + d.mspread + "|" + d.mslip + "|" + d.hours + "|" + IntegerToString(d.anchor)
-            + "|" + IntegerToString(d.tside) + "|" + IntegerToString(d.price_input));
+            + "|" + d.stop + "|" + d.maxc + "|" + d.dloss + "|" + d.mspread + "|" + d.mslip + "|" + d.hours
+            + "|" + IntegerToString(d.price_input));
      }
    WriteLines(FileFor("form", ".txt"), lines);
   }
@@ -178,10 +179,16 @@ void LoadForm()
          g_panel.collapsed = StringToInteger(StringSubstr(lines[i], 10)) != 0;
       if(StringFind(lines[i], "advanced=") == 0)
          g_panel.advanced = StringToInteger(StringSubstr(lines[i], 9)) != 0;
+      if(StringFind(lines[i], "openpoints=") == 0)
+         g_panel.openPoints = StringToInteger(StringSubstr(lines[i], 11)) != 0;
+      string xy[];
+      if(StringFind(lines[i], "pos=") == 0 && StringSplit(StringSubstr(lines[i], 4), '|', xy) == 2)
+         g_panel.MoveTo((int)StringToInteger(xy[0]), (int)StringToInteger(xy[1]));
       if(StringFind(lines[i], "form=") != 0)
          continue;
       string f[];
-      if(StringSplit(StringSubstr(lines[i], 5), '|', f) != 16)
+      int n = StringSplit(StringSubstr(lines[i], 5), '|', f);
+      if(n != 14 && n != 16)   // 16: saved before the "Trigger on" / "Levels from" buttons were removed
          continue;
       int m = (int)StringToInteger(f[0]);
       if(m < 0 || m > 1)
@@ -189,8 +196,7 @@ void LoadForm()
       g_panel.draft[m].dir = (int)StringToInteger(f[1]); g_panel.draft[m].trigger = f[2]; g_panel.draft[m].lot = f[3]; g_panel.draft[m].tp = f[4];
       g_panel.draft[m].sl = f[5]; g_panel.draft[m].gap = f[6]; g_panel.draft[m].stop = f[7]; g_panel.draft[m].maxc = f[8]; g_panel.draft[m].dloss = f[9];
       g_panel.draft[m].mspread = f[10]; g_panel.draft[m].mslip = f[11]; g_panel.draft[m].hours = f[12];
-      g_panel.draft[m].anchor = (int)StringToInteger(f[13]); g_panel.draft[m].tside = (int)StringToInteger(f[14]);
-      g_panel.draft[m].price_input = StringToInteger(f[15]) != 0;
+      g_panel.draft[m].price_input = StringToInteger(f[n - 1]) != 0;
      }
    g_panel.forceText = true;
   }
@@ -322,7 +328,7 @@ void OnTick() { Run(); }
 void OnTimer()
   {
    Run();
-   if(GetTickCount64() - g_renderAt >= 500)
+   if(!g_panel.Moving() && GetTickCount64() - g_renderAt >= 500)
       Draw();
   }
 
@@ -351,8 +357,12 @@ void ShowHelp()
               + "3. When order 1 hits TP, order 2 opens at once: SL at order 1's entry, no TP.\n"
               + "4. When order 2 hits its SL, the next cycle waits at the entry (plus the gap, if set).\n"
               + "It stops at the stop price, max cycles, daily loss limit, or when you stop it.\n\n"
-              + "SINGLE\nOne trade at the trigger price, or BUY / SELL now. TP and SL are optional.\n\n"
-              + "Open trade: type TP / SL and press Set, or drag the lines on the chart.\n"
+              + "SINGLE\nOne trade at the trigger price, or BUY / SELL now. TP and SL are optional:\n"
+              + "both use the values in the TP and SL boxes (empty = none).\n\n"
+              + "Open trade: type TP / SL as a price or as points from the entry, then press Enter.\n"
+              + "You can also drag the lines on the chart.\n"
+              + "A running cycle also takes a changed value when you press Enter.\n"
+              + "Move this panel by dragging its title. Float pops it out of MetaTrader as its own window.\n"
               + "Order 1 has no SL: use a stop price and/or a daily loss limit.\n"
               + "Close all and stop: the red button, or Ctrl+Shift+K for both bots.", "GoldCycle: how it works", MB_OK | MB_ICONINFORMATION);
   }
@@ -368,6 +378,18 @@ void Report(const bool ok, const string err)
      }
   }
 
+// a typed value: stored, and sent at once to a running cycle / the open trade
+void Enter(const string id, const string v)
+  {
+   CEngine *e = g_panel.tab == 0 ? GetPointer(g_cycle) : GetPointer(g_single);
+   string err = "";
+   if(!g_panel.Typed(e, id, v, err))
+      return;
+   Report(err == "", err);
+   if(err == "" && (e.Active() || id == "otp" || id == "osl"))
+      g_panel.Message("Applied", C_UP);
+  }
+
 void Click(const string id)
   {
    int m = g_panel.tab;
@@ -377,32 +399,23 @@ void Click(const string id)
    SConfig c;
    if(id == "help")
       ShowHelp();
+   else if(id == "float")
+      g_panel.ToggleFloat();
    else if(id == "collapse")
       g_panel.collapsed = !g_panel.collapsed;
    else if(id == "tab0" || id == "tab1")
      {
       g_panel.tab = id == "tab1" ? 1 : 0;
-      g_panel.picking = "";
       g_panel.Message("", C_MUTED);
       g_panel.forceText = true;
       ObjectsDeleteAll(0, "GCP_e_");
      }
    else if((id == "buy" || id == "sell") && !e.Active())
       g_panel.draft[m].dir = id == "buy" ? GC_BUY : GC_SELL;
-   else if(id == "bid" && e.haveTick)
+   else if(id == "oprice" || id == "opoints")
      {
-      if(!(m == 0 && e.Active() && !(e.state == GCS_ARMED && e.leg == 1)))
-        {
-         g_panel.draft[m].trigger = DoubleToString(e.lastTick.bid, 2);
-         g_panel.forceText = true;
-        }
-     }
-   else if(StringFind(id, "pick_") == 0)
-     {
-      string field = StringSubstr(id, 5);
-      g_panel.picking = g_panel.picking == field ? "" : field;
-      if(g_panel.picking != "")
-         g_panel.Message("Click on the chart at the price you want", C_INFO);
+      g_panel.SetOpenPoints(id == "opoints");
+      g_panel.Message("", C_MUTED);
      }
    else if(id == "adv")
       g_panel.advanced = !g_panel.advanced;
@@ -413,10 +426,6 @@ void Click(const string id)
       g_panel.draft[m].sl = "";
       g_panel.forceText = true;
      }
-   else if(id == "tside")
-      g_panel.draft[m].tside = (g_panel.draft[m].tside + 1) % 3;
-   else if(id == "anchor")
-      g_panel.draft[m].anchor = g_panel.draft[m].anchor == ANCHOR_PLANNED ? ANCHOR_FILL : ANCHOR_PLANNED;
    else if(id == "arm" || id == "buynow" || id == "sellnow")
      {
       bool now = id != "arm";
@@ -430,25 +439,6 @@ void Click(const string id)
          bool ok = e.Arm(c, err);
          Report(ok, err);
         }
-     }
-   else if(id == "apply")
-     {
-      g_panel.BuildConfig(m, false, c, errors);
-      if(ArraySize(errors) > 0)
-         Report(false, errors[0]);
-      else
-        {
-         c.dir = e.cfg.dir;
-         bool ok = e.UpdateConfig(c, err);
-         Report(ok, err);
-         if(ok)
-            g_panel.SyncDraft(e.cfg);
-        }
-     }
-   else if(id == "discard")
-     {
-      g_panel.SyncDraft(e.cfg);
-      g_panel.Message("", C_MUTED);
      }
    else if(id == "after")
      {
@@ -471,91 +461,29 @@ void Click(const string id)
       if(Confirm("Close all positions of the " + (m == 0 ? "Cycle" : "Single") + " bot now and stop it?"))
          e.CloseAllAndStop();
      }
-   else if(id == "setlv")
-     {
-      double tp = 0, sl = 0;
-      bool b1, b2;
-      if(!GcParse(g_panel.draft[m].otp, tp, b1) || !GcParse(g_panel.draft[m].osl, sl, b2))
-         Report(false, "TP / SL: type a price, or leave it empty for none");
-      else
-        {
-         bool ok = e.ModifyLevels(tp, sl, err);
-         Report(ok, err);
-         if(!ok)
-            g_panel.draft[m].seen_tp = -1;   // show the real values again
-        }
-     }
   }
 
+// Enter in a box (MetaTrader sends the same event when you click somewhere else)
 void EndEdit(const string id)
   {
-   int m = g_panel.tab;
+   if(ObjectFind(0, "GCP_e_" + id) < 0)
+      return;
    string v = ObjectGetString(0, "GCP_e_" + id, OBJPROP_TEXT);
    StringTrimLeft(v);
    StringTrimRight(v);
    StringReplace(v, "|", "");
-   if(id == "trigger") g_panel.draft[m].trigger = v;
-   else if(id == "lot") g_panel.draft[m].lot = v;
-   else if(id == "tp") g_panel.draft[m].tp = v;
-   else if(id == "sl") g_panel.draft[m].sl = v;
-   else if(id == "gap") g_panel.draft[m].gap = v;
-   else if(id == "stop") g_panel.draft[m].stop = v;
-   else if(id == "maxc") g_panel.draft[m].maxc = v;
-   else if(id == "dloss") g_panel.draft[m].dloss = v;
-   else if(id == "mspread") g_panel.draft[m].mspread = v;
-   else if(id == "mslip") g_panel.draft[m].mslip = v;
-   else if(id == "hours") g_panel.draft[m].hours = v;
-   else if(id == "otp") g_panel.draft[m].otp = v;
-   else if(id == "osl") g_panel.draft[m].osl = v;
-  }
-
-// "Pick": the next click on the chart fills the field with that price
-void Pick(const double price)
-  {
-   int m = g_panel.tab;
-   string field = g_panel.picking;
-   string text = DoubleToString(price, 2);
-   if(field == "otp" || field == "osl")   // the open trade: fill the box, "Set" sends it
-     {
-      if(field == "otp")
-         g_panel.draft[m].otp = text;
-      else
-         g_panel.draft[m].osl = text;
-      g_panel.picking = "";
-      g_panel.Message("Now press 'Set TP / SL on this trade'", C_INFO);
-      g_panel.forceText = true;
-      return;
-     }
-   if(field == "trigger")
-      g_panel.draft[m].trigger = text;
-   else if(field == "stop")
-      g_panel.draft[m].stop = text;
-   else
-     {
-      if(m == GC_SINGLE && !g_panel.draft[m].price_input)
-        {
-         g_panel.draft[m].price_input = true;
-         g_panel.draft[m].tp = "";
-         g_panel.draft[m].sl = "";
-        }
-      if(field == "tp")
-         g_panel.draft[m].tp = text;
-      else
-         g_panel.draft[m].sl = text;
-      double trig;
-      bool blank;
-      if(GcParse(g_panel.draft[m].trigger, trig, blank) && trig > 0 && !g_single.Active())
-         g_panel.draft[m].dir = ((field == "tp") == (price > trig)) ? GC_BUY : GC_SELL;
-     }
-   g_panel.picking = "";
-   g_panel.Message("", C_MUTED);
-   g_panel.forceText = true;
+   Enter(id, v);
   }
 
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
   {
    if(!g_loaded)
       return;
+   if(id == CHARTEVENT_MOUSE_MOVE)   // dragging the panel (very frequent: nothing else runs here)
+     {
+      g_panel.Mouse((int)lparam, (int)dparam, (StringToInteger(sparam) & 1) != 0);
+      return;
+     }
    int ev = id;
    string name = sparam;
    if(InpTestHooks && id == CHARTEVENT_CUSTOM + 1)          // test script "clicks" a button
@@ -579,14 +507,6 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
      }
    else if(ev == CHARTEVENT_OBJECT_ENDEDIT && StringFind(name, "GCP_e_") == 0)
       EndEdit(StringSubstr(name, 6));
-   else if(ev == CHARTEVENT_CLICK && g_panel.picking != "" && !g_panel.Inside((int)lparam, (int)dparam))
-     {
-      int sub;
-      datetime t;
-      double price;
-      if(ChartXYToTimePrice(0, (int)lparam, (int)dparam, sub, t, price) && sub == 0 && price > 0)
-         Pick(price);
-     }
    else if(ev == CHARTEVENT_KEYDOWN && lparam == 'K' && TerminalInfoInteger(TERMINAL_KEYSTATE_CONTROL) < 0
            && TerminalInfoInteger(TERMINAL_KEYSTATE_SHIFT) < 0)
      {

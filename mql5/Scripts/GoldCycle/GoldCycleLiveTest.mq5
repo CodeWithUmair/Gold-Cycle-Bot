@@ -136,10 +136,11 @@ string StateName(const string bot)
 
 void SingleTest()
   {
-   Out("--- SINGLE: Buy now, set TP/SL, Close trade");
+   Out("--- SINGLE: Buy now, type TP/SL, Close trade");
    Click("tab1");
    Type("lot", "0.01");
    Check(Pos(MAGIC_SINGLE) == 0, "no Single position before");
+   Type("tp", ""); Type("sl", "");
    Click("buynow");
    ulong t = WaitPos(MAGIC_SINGLE, 15);
    Check(t != 0, "Buy now opened a position #" + IntegerToString((long)t));
@@ -147,13 +148,12 @@ void SingleTest()
    PositionSelectByTicket(t);
    Out("position: price " + DoubleToString(PositionGetDouble(POSITION_PRICE_OPEN), 3) + " tp " + DoubleToString(PositionGetDouble(POSITION_TP), 3)
        + " sl " + DoubleToString(PositionGetDouble(POSITION_SL), 3) + " comment '" + PositionGetString(POSITION_COMMENT) + "'");
-   Check(PositionGetDouble(POSITION_TP) == 0 && PositionGetDouble(POSITION_SL) == 0, "Buy now opens with no TP/SL");
+   Check(PositionGetDouble(POSITION_TP) == 0 && PositionGetDouble(POSITION_SL) == 0, "Buy now with empty TP/SL boxes opens with none");
    Check(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY && MathAbs(PositionGetDouble(POSITION_VOLUME) - 0.01) < 1e-9, "BUY 0.01");
    double tp = NormalizeDouble(Bid() + 25, 2), sl = NormalizeDouble(Bid() - 25, 2);
    Sleep(600);
    Type("otp", DoubleToString(tp, 2));
    Type("osl", DoubleToString(sl, 2));
-   Click("setlv");
    Sleep(1500);
    PositionSelectByTicket(t);
    Check(MathAbs(PositionGetDouble(POSITION_TP) - tp) < 0.01 && MathAbs(PositionGetDouble(POSITION_SL) - sl) < 0.01,
@@ -174,6 +174,65 @@ void SingleTest()
    Check(h, "MetaTrader history has the open and close: " + DoubleToString(op, 3) + " -> " + DoubleToString(cp, 3) + " P/L " + DoubleToString(profit, 2));
    Sleep(1500);
    Check(StateName("single") == "IDLE", "Single back to IDLE (" + StateName("single") + ")");
+  }
+
+bool Levels(const ulong t, const double tp, const double sl)
+  {
+   if(!PositionSelectByTicket(t))
+      return false;
+   Out("server position: TP " + DoubleToString(PositionGetDouble(POSITION_TP), 3) + " SL " + DoubleToString(PositionGetDouble(POSITION_SL), 3));
+   return MathAbs(PositionGetDouble(POSITION_TP) - tp) < 0.011 && MathAbs(PositionGetDouble(POSITION_SL) - sl) < 0.011;
+  }
+
+// BUY now takes the TP / SL boxes, the open trade takes points, SELL now takes exact prices
+void LevelsTest()
+  {
+   Out("--- SINGLE: Buy now with TP 6 / SL 4 points");
+   Click("tab1");
+   Type("lot", "0.01"); Type("tp", "6"); Type("sl", "4");
+   Click("buynow");
+   ulong t = WaitPos(MAGIC_SINGLE, 15);
+   Check(t != 0, "Buy now with levels opened #" + IntegerToString((long)t));
+   if(t != 0)
+     {
+      Sleep(2500);
+      PositionSelectByTicket(t);
+      double open = PositionGetDouble(POSITION_PRICE_OPEN);
+      Check(Levels(t, open + 6, open - 4), "TP is 6 above and SL 4 below the fill " + DoubleToString(open, 3));
+      Click("opoints");
+      Type("otp", "8"); Type("osl", "5");
+      Sleep(1500);
+      Check(Levels(t, open + 8, open - 5), "points typed on the open trade reach the server (TP 8, SL 5)");
+      Shot("shot_points");
+      Click("oprice");
+      Click("stopnow");
+      Check(WaitGone(t, 15), "Close trade closed it");
+      Sleep(2000);
+     }
+   Out("--- SINGLE: Sell now with exact TP / SL prices");
+   Click("unit");   // Points -> exact prices (clears both boxes)
+   double tp = NormalizeDouble(Bid() - 20, 2), sl = NormalizeDouble(Bid() + 20, 2);
+   Type("tp", DoubleToString(tp, 2)); Type("sl", DoubleToString(sl, 2));
+   Click("sellnow");
+   t = WaitPos(MAGIC_SINGLE, 15);
+   Check(t != 0, "Sell now with prices opened #" + IntegerToString((long)t));
+   if(t != 0)
+     {
+      Sleep(2500);
+      Check(Levels(t, tp, sl) && PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL, "SELL with TP " + DoubleToString(tp, 2) + " / SL " + DoubleToString(sl, 2));
+      Click("stopnow");
+      Check(WaitGone(t, 15), "Close trade closed it");
+      Sleep(2000);
+     }
+   Click("unit");   // back to points
+
+   Out("--- panel: Float / Dock");
+   Click("float");
+   Sleep(1500);
+   Check(ChartGetInteger(0, CHART_IS_DOCKED) == 0, "Float pops the chart out of MetaTrader");
+   Click("float");
+   Sleep(1500);
+   Check(ChartGetInteger(0, CHART_IS_DOCKED) != 0, "Dock puts it back");
   }
 
 // one cycle with a small TP; waits to see order 2 open at order 1's TP. Returns true if it was observed.
@@ -316,7 +375,7 @@ void ButtonsTest()
    Click("arm");
    Check(StateName("cycle") != "ARMED" && StateName("cycle") != "OPENING" && Pos(MAGIC_CYCLE) == 0, "TP 'abc' refused (" + StateName("cycle") + ")");
 
-   Out("--- CYCLE: Apply changes while waiting");
+   Out("--- CYCLE: change the trigger while waiting");
    Type("tp", "20");
    if(ObjectFind(0, "GCP_e_maxc") < 0) Click("adv");
    Type("maxc", "1"); Type("mspread", "1"); Type("mslip", "1"); Type("dloss", ""); Type("hours", "");
@@ -324,7 +383,6 @@ void ButtonsTest()
    Check(StateName("cycle") == "ARMED", "armed (" + StateName("cycle") + ")");
    double moved = NormalizeDouble(Bid() - 12, 2);
    Type("trigger", DoubleToString(moved, 2));
-   Click("apply");
    Check(MathAbs(StringToDouble(State("cycle", "planned")) - moved) < 0.001 && Pos(MAGIC_CYCLE) == 0, "waiting level moved to " + DoubleToString(moved, 2));
    Click("stopnow");
 
@@ -350,11 +408,10 @@ void ButtonsTest()
      {
       Sleep(1500);
       Type("tp", "25");
-      Shot("shot_apply_before");
-      Click("apply");
+      Shot("shot_tp_typed");
       Sleep(1500);
       PositionSelectByTicket(t);
-      Check(MathAbs(PositionGetDouble(POSITION_TP) - (trig + side * 25)) < 0.011, "Apply changes moved the TP on the server to " + DoubleToString(PositionGetDouble(POSITION_TP), 2));
+      Check(MathAbs(PositionGetDouble(POSITION_TP) - (trig + side * 25)) < 0.011, "typing a new TP moved it on the server to " + DoubleToString(PositionGetDouble(POSITION_TP), 2));
       Click("after");
       Check(State("cycle", "stop_after") == "1" && StateName("cycle") == "IN_POSITION", "Stop after cycle noted");
       Click("stopnow");
@@ -362,7 +419,6 @@ void ButtonsTest()
       Check(StateName("cycle") == "STOPPED" && PositionSelectByTicket(t), "Stop now: bot stopped, the trade stays open");
       double tp = NormalizeDouble(trig + side * 30, 2), sl = NormalizeDouble(trig - side * 30, 2);
       Type("otp", DoubleToString(tp, 2)); Type("osl", DoubleToString(sl, 2));
-      Click("setlv");
       Sleep(1500);
       PositionSelectByTicket(t);
       Check(MathAbs(PositionGetDouble(POSITION_TP) - tp) < 0.011 && MathAbs(PositionGetDouble(POSITION_SL) - sl) < 0.011, "TP/SL set on the left-open trade");
@@ -418,6 +474,7 @@ void OnStart()
      {
       Shot("shot_idle");
       SingleTest();
+      LevelsTest();
       bool seen = false;
       for(int attempt = 0; attempt < 4 && !seen && !IsStopped(); attempt++)
         {

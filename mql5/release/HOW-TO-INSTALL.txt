@@ -19,13 +19,17 @@ INSTALL (once)
 8. Click "Algo Trading" at the top of MetaTrader so it is GREEN.
 
 The panel appears on the chart. It should say DEMO and show no red message.
+To move it, drag it by its top part (the title) with the mouse.
+To take it outside MetaTrader (or to a second screen), press "Float", then
+drag that window by its top bar. "Dock" puts it back.
 
 USE
 Point = 1.00 of price (4000 to 4003 is 3 points). Start with lot 0.01.
 
 SINGLE tab (one trade)
-- BUY now / SELL now: opens at once, without TP and SL.
-- Or type a trigger price, TP and SL (both optional) > "Start at trigger price".
+- Type TP and SL first if you want them (both optional, empty = none).
+- BUY now / SELL now: opens at once with that TP and SL.
+- Or type a trigger price > "Start at trigger price".
 - "Close trade" closes it.
 
 CYCLE tab
@@ -36,8 +40,16 @@ CYCLE tab
 - IMPORTANT: order 1 has no stop loss. Always set a "Stop price" and/or a "Daily loss" limit.
 
 CHANGE TP / SL OF AN OPEN TRADE (Single and Cycle)
-- Under "Change THIS open trade": type the prices > "Set TP / SL on this trade".
-- Or drag the TP / SL lines on the chart. An empty box removes it.
+- Under "Change THIS open trade" choose "Price" or "Points", type the TP or SL
+  and press ENTER. It is applied at once.
+  Price  = the exact gold price, for example 3720.
+  Points = the distance from your entry, for example 5.
+- Or drag the TP / SL lines on the chart.
+- Empty a box and press ENTER to remove that TP or SL.
+
+CHANGE A RUNNING CYCLE
+- Type the new value and press ENTER. It is applied at once.
+  Clicking somewhere else after typing applies it too.
 
 STOP
 - "Stop now": the bot stops, the open trade stays open.

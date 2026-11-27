@@ -1,6 +1,7 @@
 //+------------------------------------------------------------------+
 //| GoldCycle - the on-chart panel (replaces the web dashboard) and  |
-//| the price lines. Draws and reads the form; the EA runs actions.  |
+//| the price lines. A typed value is applied at once; the EA runs   |
+//| the buttons. Drag the panel by its title; Float pops it out.     |
 //+------------------------------------------------------------------+
 #ifndef GC_PANEL_MQH
 #define GC_PANEL_MQH
@@ -9,7 +10,8 @@
 
 #define GC_UI   "GCP_"
 #define GC_LINE "GCL_"
-#define GC_LOG_MAX 40
+#define GC_HEAD 94    // title area: drag the panel by it
+#define GC_BODY 222   // first row of the form, under the tabs and the status box
 
 #define C_BG     C'15,19,26'
 #define C_PANEL  C'27,34,46'
@@ -27,8 +29,6 @@ struct SDraft
   {
    int               dir;
    string            trigger, lot, tp, sl, gap, stop, maxc, dloss, mspread, mslip, hours;
-   int               anchor;
-   int               tside;
    bool              price_input;
    string            otp, osl;          // TP / SL boxes of the open trade
    double            seen_tp, seen_sl;  // engine values the boxes were last filled from
@@ -39,21 +39,71 @@ class CGcPanel
   {
 private:
    string            m_used[];
+   int               m_ux[], m_uy[];    // each widget's place inside the panel, for dragging
+   ulong             m_movedAt;
    int               m_usedN;
    double            m_k;               // screen scale (DPI / 96)
    int               m_x, m_y;
+   bool              m_down, m_drag, m_hold, m_scroll;   // mouse state while dragging
+   int               m_dx, m_dy;
+   int               m_cw, m_ch;          // chart size, read at each draw and when a drag starts
 
    int               S(const int v) const { return (int)MathRound(v * m_k); }
 
-   void              Use(const string name)
+   // the chart must not scroll while the mouse works on the panel
+   void              Hold(const bool hold)
+     {
+      if(hold == m_hold)
+         return;
+      if(hold)
+         m_scroll = ChartGetInteger(0, CHART_MOUSE_SCROLL) != 0;
+      ChartSetInteger(0, CHART_MOUSE_SCROLL, hold ? false : m_scroll);
+      m_hold = hold;
+     }
+   void              ReadChartSize()   // slow (waits for the chart), so not on every mouse move
+     {
+      m_cw = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS);
+      m_ch = (int)ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS);
+     }
+   void              Clamp()   // keep the title on the chart, so it can always be grabbed
+     {
+      if(m_cw <= 0 || m_ch <= 0)
+         return;
+      m_x = (int)MathMax(0, MathMin(m_x, m_cw - S(width)));
+      m_y = (int)MathMax(0, MathMin(m_y, m_ch - S(GC_HEAD)));
+     }
+   static bool       Keep(string &field, const string v)   // true = the value changed
+     {
+      if(field == v)
+         return false;
+      field = v;
+      return true;
+     }
+   void              Use(const string name, const int x, const int y)
      {
       if(m_usedN >= ArraySize(m_used))
+        {
          ArrayResize(m_used, m_usedN + 64, 256);
+         ArrayResize(m_ux, m_usedN + 64, 256);
+         ArrayResize(m_uy, m_usedN + 64, 256);
+        }
+      m_ux[m_usedN] = S(x);
+      m_uy[m_usedN] = S(y);
       m_used[m_usedN++] = name;
      }
-   bool              Make(const string name, const ENUM_OBJECT type)
+   // move what is already on the chart: redrawing the whole panel on every mouse move is jerky
+   void              Shift()
      {
-      Use(name);
+      for(int i = 0; i < m_usedN; i++)
+        {
+         ObjectSetInteger(0, m_used[i], OBJPROP_XDISTANCE, m_x + m_ux[i]);
+         ObjectSetInteger(0, m_used[i], OBJPROP_YDISTANCE, m_y + m_uy[i]);
+        }
+      ChartRedraw();
+     }
+   bool              Make(const string name, const ENUM_OBJECT type, const int x, const int y)
+     {
+      Use(name, x, y);
       if(ObjectFind(0, name) >= 0)
          return false;
       ObjectCreate(0, name, type, 0, 0, 0);
@@ -76,7 +126,7 @@ private:
    void              Rect(const string id, const int x, const int y, const int w, const int h, const color bg, const color border)
      {
       string n = GC_UI + "r_" + id;
-      Make(n, OBJ_RECTANGLE_LABEL);
+      Make(n, OBJ_RECTANGLE_LABEL, x, y);
       Place(n, x, y, w, h);
       ObjectSetInteger(0, n, OBJPROP_BGCOLOR, bg);
       ObjectSetInteger(0, n, OBJPROP_BORDER_TYPE, BORDER_FLAT);
@@ -85,7 +135,7 @@ private:
    void              Text(const string id, const int x, const int y, const string text, const color c = C_TEXT, const int size = 9, const string font = "Segoe UI")
      {
       string n = GC_UI + "t_" + id;
-      Make(n, OBJ_LABEL);
+      Make(n, OBJ_LABEL, x, y);
       Place(n, x, y);
       ObjectSetString(0, n, OBJPROP_TEXT, text == "" ? " " : StringSubstr(text, 0, 63));   // MT5 shows "Label" for ""
       ObjectSetString(0, n, OBJPROP_FONT, font);
@@ -96,7 +146,7 @@ private:
                             const color bg = C_PANEL, const color fg = C_TEXT, const color border = C_BORDER)
      {
       string n = GC_UI + "b_" + id;
-      Make(n, OBJ_BUTTON);
+      Make(n, OBJ_BUTTON, x, y);
       Place(n, x, y, w, h);
       ObjectSetString(0, n, OBJPROP_TEXT, text);
       ObjectSetString(0, n, OBJPROP_FONT, "Segoe UI Semibold");
@@ -110,7 +160,7 @@ private:
    void              Edit(const string id, const int x, const int y, const int w, const string value, const bool locked = false)
      {
       string n = GC_UI + "e_" + id;
-      bool created = Make(n, OBJ_EDIT);
+      bool created = Make(n, OBJ_EDIT, x, y);
       // an existing box is left completely alone unless it moved or was locked / unlocked: re-setting its
       // properties on every refresh could interrupt typing
       bool changed = created || ObjectGetInteger(0, n, OBJPROP_YDISTANCE) != m_y + S(y)
@@ -153,20 +203,19 @@ public:
    int               tab;               // 0 = Cycle, 1 = Single
    bool              collapsed;
    bool              advanced;
+   bool              openPoints;        // open trade TP / SL typed as points from its entry, not as a price
    bool              forceText;
-   string            picking;           // field waiting for a click on the chart
    string            message;           // result of the last button
    color             messageColor;
-   string            logText[];
-   int               logColor[];
    SDraft            draft[2];
    long              magic;
    int               width, height;
 
                      CGcPanel()
      {
-      tab = 0; collapsed = false; advanced = false; forceText = false; picking = ""; message = ""; messageColor = C_MUTED;
-      m_k = 1; m_x = 10; m_y = 30; magic = 0; width = 650; height = 600; m_usedN = 0;
+      tab = 0; collapsed = false; advanced = false; openPoints = false; forceText = false; message = ""; messageColor = C_MUTED;
+      m_k = 1; m_x = 10; m_y = 30; magic = 0; width = 314; height = 600; m_usedN = 0;
+      m_movedAt = 0; m_cw = 0; m_ch = 0; m_down = false; m_drag = false; m_hold = false; m_scroll = true; m_dx = 0; m_dy = 0;
      }
 
    void              Init(const int x, const int y, const long magic_number, const double default_lot)
@@ -178,28 +227,78 @@ public:
         {
          draft[i].dir = GC_BUY; draft[i].trigger = ""; draft[i].lot = GcNum(default_lot); draft[i].tp = i == 0 ? "3" : "";
          draft[i].sl = ""; draft[i].gap = ""; draft[i].stop = ""; draft[i].maxc = ""; draft[i].dloss = ""; draft[i].mspread = "0.6";
-         draft[i].mslip = "0.5"; draft[i].hours = ""; draft[i].anchor = ANCHOR_PLANNED; draft[i].tside = SIDE_BID;
+         draft[i].mslip = "0.5"; draft[i].hours = "";
          draft[i].price_input = false; draft[i].otp = ""; draft[i].osl = ""; draft[i].seen_tp = -1; draft[i].seen_sl = -1; draft[i].seen_ticket = 0;
         }
       ChartSetInteger(0, CHART_FOREGROUND, false);
       ChartSetInteger(0, CHART_SHOW_OBJECT_DESCR, true);
+      ChartSetInteger(0, CHART_EVENT_MOUSE_MOVE, true);   // for dragging
+      m_down = false; m_drag = false;
      }
 
    bool              Inside(const int x, const int y) const { return x >= m_x && x <= m_x + S(width) && y >= m_y && y <= m_y + S(height); }
 
-   void              Log(const string level, const string msg)
+   int               X() const { return m_x; }
+   int               Y() const { return m_y; }
+   void              MoveTo(const int x, const int y) { m_x = x; m_y = y; }
+
+   // being dragged right now (a full redraw would make it stutter)
+   bool              Moving() const { return m_drag && GetTickCount64() - m_movedAt < 300; }
+
+   //--- pop the chart (with the panel) out as its own window, which can be dragged anywhere, even to another
+   //    screen. The panel can't leave a chart in MetaTrader, so the chart goes with it
+   void              ToggleFloat()
      {
-      int n = ArraySize(logText);
-      if(n >= GC_LOG_MAX)
+      bool docked = ChartGetInteger(0, CHART_IS_DOCKED) != 0;
+      ChartSetInteger(0, CHART_IS_DOCKED, !docked);
+      if(!docked)
+         return;
+      int screen = (int)TerminalInfoInteger(TERMINAL_SCREEN_HEIGHT);
+      int bottom = 40 + S(790);
+      if(screen > 200)
+         bottom = (int)MathMin(bottom, screen - 60);
+      ChartSetInteger(0, CHART_FLOAT_LEFT, 40);
+      ChartSetInteger(0, CHART_FLOAT_TOP, 40);
+      ChartSetInteger(0, CHART_FLOAT_RIGHT, 40 + S(width + 100));   // room for the price scale
+      ChartSetInteger(0, CHART_FLOAT_BOTTOM, bottom);
+      m_x = 0;
+      m_y = 0;
+     }
+
+   //--- drag the panel by its title. true = it moved
+   bool              Mouse(const int x, const int y, const bool down)
+     {
+      bool pressed = down && !m_down;
+      m_down = down;
+      if(!down || pressed)
+         Hold(Inside(x, y));
+      if(pressed && Inside(x, y) && y < m_y + S(GC_HEAD) && x < m_x + S(width - 116))   // not on the header buttons
         {
-         ArrayRemove(logText, 0, 1);
-         ArrayRemove(logColor, 0, 1);
-         n--;
+         ReadChartSize();
+         m_drag = true;
+         m_dx = x - m_x;
+         m_dy = y - m_y;
         }
-      ArrayResize(logText, n + 1);
-      ArrayResize(logColor, n + 1);
-      logText[n] = TimeToString(TimeLocal(), TIME_SECONDS) + " " + msg;
-      logColor[n] = (int)(level == "error" ? C_DOWN : level == "warn" ? C_WARN : C_TEXT);
+      if(!down)
+         m_drag = false;
+      if(!m_drag)
+         return false;
+      int old_x = m_x, old_y = m_y;
+      m_x = x - m_dx;
+      m_y = y - m_dy;
+      Clamp();
+      if(m_x == old_x && m_y == old_y)
+         return false;
+      m_movedAt = GetTickCount64();
+      Shift();
+      return true;
+     }
+
+   void              SetOpenPoints(const bool points)
+     {
+      openPoints = points;
+      draft[0].seen_tp = -1;   // show the levels in the chosen unit
+      draft[1].seen_tp = -1;
      }
 
    void              Message(const string msg, const color c) { message = msg; messageColor = c; }
@@ -211,7 +310,7 @@ public:
       d = draft[mode];
       ArrayResize(errors, 0);
       GcDefaultConfig(c, mode);
-      c.dir = d.dir; c.anchor = d.anchor; c.trigger_side = d.tside; c.enter_now = enter_now;
+      c.dir = d.dir; c.enter_now = enter_now;
       c.price_input = mode == GC_SINGLE && d.price_input;
       double v;
       if(!enter_now)   // "Buy / Sell now" uses the live price
@@ -223,28 +322,25 @@ public:
       c.lot = Num(d.lot, "Lot", errors);
       if(c.lot <= 0)
          GcAdd(errors, "Enter the lot");
-      if(!enter_now)   // "Buy / Sell now" opens without TP and SL
-        {
-         v = Num(d.tp, "TP", errors);
-         if(c.price_input)
-            c.tp_price = v;
-         else
-            c.tp_points = v;
-         if(d.tp != "" && v <= 0)
-            GcAdd(errors, "TP must be above 0 (or blank)");
-         if(mode == GC_SINGLE)
-           {
-            v = Num(d.sl, "SL", errors);
-            if(c.price_input)
-               c.sl_price = v;
-            else
-               c.sl_points = v;
-            if(d.sl != "" && v <= 0)
-               GcAdd(errors, "SL must be above 0 (or blank)");
-           }
-        }
+      v = Num(d.tp, "TP", errors);
+      if(c.price_input)
+         c.tp_price = v;
       else
-         c.price_input = false;
+         c.tp_points = v;
+      if(d.tp != "" && v <= 0)
+         GcAdd(errors, "TP must be above 0 (or blank)");
+      if(mode == GC_SINGLE)
+        {
+         v = Num(d.sl, "SL", errors);
+         if(c.price_input)
+            c.sl_price = v;
+         else
+            c.sl_points = v;
+         if(d.sl != "" && v <= 0)
+            GcAdd(errors, "SL must be above 0 (or blank)");
+        }
+      if(enter_now && !c.price_input)
+         c.anchor = ANCHOR_FILL;   // "Buy / Sell now": points count from the price actually received
       if(mode == GC_CYCLE)
         {
          c.gap = Num(d.gap, "Cycle gap", errors);
@@ -275,41 +371,117 @@ public:
       draft[m].dloss = c.daily_loss > 0 ? GcNum(c.daily_loss) : "";
       draft[m].mspread = c.max_spread > 0 ? GcNum(c.max_spread) : "";
       draft[m].mslip = GcNum(c.max_slippage);
-      draft[m].hours = c.hours; draft[m].anchor = c.anchor; draft[m].tside = c.trigger_side;
+      draft[m].hours = c.hours;
       forceText = true;
      }
 
-   // does the form differ from the running cycle? (then "Apply changes" is offered)
-   bool              Differs(CEngine *bot)
+   //--- a value was typed (Enter): store it and send it at once to the running cycle / the open trade.
+   //    false = nothing changed. err != "" = refused, and the boxes go back to the values in effect
+   bool              Typed(CEngine *bot, const string id, const string v, string &err)
      {
-      SConfig c;
-      string errors[];
-      BuildConfig(bot.mode, false, c, errors);
-      if(ArraySize(errors) > 0)
-         return true;
-      if(GcNormalizeConfig(c) != "")
-         return true;
-      SConfig r;
-      r = bot.cfg;
-      return MathAbs(c.trigger - r.trigger) > GC_EPS || MathAbs(c.lot - r.lot) > GC_EPS || MathAbs(c.tp_points - r.tp_points) > GC_EPS
-             || MathAbs(c.gap - r.gap) > GC_EPS || MathAbs(c.stop_price - r.stop_price) > GC_EPS || c.max_cycles != r.max_cycles
-             || MathAbs(c.daily_loss - r.daily_loss) > GC_EPS || MathAbs(c.max_spread - r.max_spread) > GC_EPS
-             || MathAbs(c.max_slippage - r.max_slippage) > GC_EPS || c.hours != r.hours || c.anchor != r.anchor || c.trigger_side != r.trigger_side;
+      int m = bot.mode;
+      err = "";
+      bool changed = false;
+      if(id == "trigger") changed = Keep(draft[m].trigger, v);
+      else if(id == "lot") changed = Keep(draft[m].lot, v);
+      else if(id == "tp") changed = Keep(draft[m].tp, v);
+      else if(id == "sl") changed = Keep(draft[m].sl, v);
+      else if(id == "gap") changed = Keep(draft[m].gap, v);
+      else if(id == "stop") changed = Keep(draft[m].stop, v);
+      else if(id == "maxc") changed = Keep(draft[m].maxc, v);
+      else if(id == "dloss") changed = Keep(draft[m].dloss, v);
+      else if(id == "mspread") changed = Keep(draft[m].mspread, v);
+      else if(id == "mslip") changed = Keep(draft[m].mslip, v);
+      else if(id == "hours") changed = Keep(draft[m].hours, v);
+      else if(id == "otp") changed = Keep(draft[m].otp, v);
+      else if(id == "osl") changed = Keep(draft[m].osl, v);
+      if(!changed)
+         return false;
+      if(id == "otp" || id == "osl")
+         SendLevel(bot, id == "otp", v, err);
+      else
+         Apply(bot, err);
+      return true;
      }
 
+private:
+   // a running cycle takes the form's values at once; when the bot is not running, Start uses them
+   void              Apply(CEngine *bot, string &err)
+     {
+      err = "";
+      if(!bot.Active())
+         return;
+      if(bot.mode == GC_SINGLE)
+         err = "A waiting Single trade can't change: Cancel first";
+      else
+        {
+         SConfig c;
+         string errors[];
+         BuildConfig(GC_CYCLE, false, c, errors);
+         c.dir = bot.cfg.dir;
+         if(ArraySize(errors) > 0)
+            err = errors[0];
+         else
+            bot.UpdateConfig(c, err);
+        }
+      SyncDraft(bot.cfg);   // show what is really in effect
+     }
+
+   // +1 / -1: which way from the entry a TP (profit side) or an SL (loss side) counts its points
+   static int        Side(CEngine *bot, const bool is_tp) { return (is_tp ? 1 : -1) * GcSign(bot.pos.dir); }
+
+   // the open trade's TP / SL as its box shows it ("" = none)
+   string            LevelText(CEngine *bot, const bool is_tp)
+     {
+      double level = is_tp ? bot.cur_tp : bot.cur_sl;
+      if(level <= 0)
+         return "";
+      if(!openPoints)
+         return DoubleToString(level, 2);
+      double pts = NormalizeDouble(Side(bot, is_tp) * (level - bot.pos.price_open) / GC_POINT_SIZE, 2);
+      return MathAbs(pts) < 0.005 ? "0" : GcNum(pts);
+     }
+
+   // the open trade: only the typed level changes, the other one stays exactly as it is on the trade
+   void              SendLevel(CEngine *bot, const bool is_tp, string text, string &err)
+     {
+      // points may be negative: an SL of -2 sits 2 points on the profit side of the entry
+      bool minus = openPoints && StringGetCharacter(text, 0) == '-';
+      if(minus)
+         text = StringSubstr(text, 1);
+      double v;
+      bool blank;
+      if(!GcParse(text, v, blank) || (minus && blank))
+         err = openPoints ? "TP / SL: type points, or leave it empty for none" : "TP / SL: type a price, or leave it empty for none";
+      else
+        {
+         if(openPoints && !blank)
+            v = GcR6(bot.pos.price_open + Side(bot, is_tp) * (minus ? -v : v) * GC_POINT_SIZE);
+         if(openPoints && !blank && v <= 0)   // must never turn into "remove it"
+            err = "TP / SL: that many points is below a price of 0";
+         else
+            bot.ModifyLevels(is_tp ? v : bot.cur_tp, is_tp ? bot.cur_sl : v, err);
+        }
+      draft[bot.mode].seen_tp = -1;   // redraw the boxes from the trade
+     }
+
+public:
    void              Render(CEngine *cycle, CEngine *single, const string symbol, const string warning, const double today_pnl)
      {
       m_usedN = 0;
       CEngine *bot = tab == 0 ? cycle : single;
-      width = 652;
+      ReadChartSize();
+      Clamp();
       Text("magic_" + IntegerToString(magic), -2000, -2000, " ");   // marks this chart: one GoldCycle per symbol and magic
-      height = collapsed ? 58 : 646;
+      if(collapsed)
+         height = GC_HEAD;
       Rect("bg", 0, 0, width, height, C_BG, C_BORDER);
       Header(cycle, single, symbol, warning);
       if(!collapsed)
         {
-         Form(bot);
-         Info(bot, today_pnl);
+         Status(bot, today_pnl);
+         height = Form(bot) + 4;
+         Rect("bg", 0, 0, width, height, C_BG, C_BORDER);
         }
       Sweep();
       forceText = false;
@@ -317,6 +489,7 @@ public:
 
    void              Remove()
      {
+      Hold(false);
       ObjectsDeleteAll(0, GC_UI);
       ObjectsDeleteAll(0, GC_LINE);
       ChartRedraw();
@@ -422,24 +595,22 @@ private:
       Text("title", 12, 7, "GoldCycle", C_GOLD, 13, "Segoe UI Semibold");
       bool demo = AccountInfoInteger(ACCOUNT_TRADE_MODE) == ACCOUNT_TRADE_MODE_DEMO;
       Text("mode", 110, 11, demo ? "DEMO" : "REAL ACCOUNT", demo ? C_GOLD : C_DOWN, 9, "Segoe UI Semibold");
-      Text("acct", 215, 11, "#" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + "   " + symbol, C_TEXT);
-      Text("money", 390, 11, "Balance " + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + "   Equity "
-           + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2), C_TEXT);
+      Button("float", width - 110, 6, 44, 20, ChartGetInteger(0, CHART_IS_DOCKED) != 0 ? "Float" : "Dock");
       Button("help", width - 62, 6, 24, 20, "?");
       Button("collapse", width - 32, 6, 24, 20, collapsed ? "+" : "-");
-      string line = warning;
-      color c = C_DOWN;
-      if(line == "")
-        {
-         line = "Cycle: " + GcStateName(cycle.state) + "      Single: " + GcStateName(single.state);
-         if(cycle.haveTick)
-            line += "      Spread " + DoubleToString(GcSpreadPoints(cycle.lastTick), 2);
-         c = C_MUTED;
-        }
-      Text("sub", 12, 34, line, c);
+      string line = "#" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + "   " + symbol;
+      if(cycle.haveTick)
+         line += "   Spread " + DoubleToString(GcSpreadPoints(cycle.lastTick), 2);
+      Text("acct", 12, 30, line);
+      Text("money", 12, 47, "Balance " + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + "   Equity "
+           + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2));
+      if(warning != "")
+         Wrapped("top", 12, 64, warning, C_DOWN, 50, 2);
+      else
+         Text("sub", 12, 64, "Cycle: " + GcStateName(cycle.state) + "      Single: " + GcStateName(single.state), C_MUTED);
      }
 
-   void              Form(CEngine *bot)
+   int               Form(CEngine *bot)   // returns where it ends
      {
       int m = bot.mode;
       SDraft d;
@@ -450,27 +621,23 @@ private:
       bool trigger_locked = m == GC_CYCLE && running && !(bot.state == GCS_ARMED && bot.leg == 1);
       if(trigger_locked && bot.hasCfg)   // a locked field shows the running value (an unapplied edit can't get stuck)
          draft[m].trigger = GcNum(bot.cfg.trigger);
-      Button("tab0", 10, 58, 144, 24, "Cycle", tab == 0 ? C_GOLD : C_PANEL, tab == 0 ? clrBlack : C_TEXT);
-      Button("tab1", 160, 58, 144, 24, "Single", tab == 1 ? C_GOLD : C_PANEL, tab == 1 ? clrBlack : C_TEXT);
+      Button("tab0", 10, GC_HEAD, 144, 24, "Cycle", tab == 0 ? C_GOLD : C_PANEL, tab == 0 ? clrBlack : C_TEXT);
+      Button("tab1", 160, GC_HEAD, 144, 24, "Single", tab == 1 ? C_GOLD : C_PANEL, tab == 1 ? clrBlack : C_TEXT);
       // a Single trade is open: show only what changes THIS trade (the form is for the next one)
       bool trade_only = m == GC_SINGLE && holding;
-      int y = 88;
+      int y = GC_BODY;
       if(!trade_only)
         {
          int dir = (running && bot.hasCfg) ? bot.cfg.dir : d.dir;
          bool dir_locked = running;
-         Button("buy", 10, 88, 144, 26, "BUY", dir == GC_BUY ? C_UP : C_PANEL, dir == GC_BUY ? clrWhite : (dir_locked ? C_MUTED : C_TEXT));
-         Button("sell", 160, 88, 144, 26, "SELL", dir == GC_SELL ? C_DOWN : C_PANEL, dir == GC_SELL ? clrWhite : (dir_locked ? C_MUTED : C_TEXT));
-         y = 122;
+         Button("buy", 10, y, 144, 26, "BUY", dir == GC_BUY ? C_UP : C_PANEL, dir == GC_BUY ? clrWhite : (dir_locked ? C_MUTED : C_TEXT));
+         Button("sell", 160, y, 144, 26, "SELL", dir == GC_SELL ? C_DOWN : C_PANEL, dir == GC_SELL ? clrWhite : (dir_locked ? C_MUTED : C_TEXT));
+         y += 34;
          Text("l_trig", 10, y + 3, "Trigger price", C_MUTED);
          Edit("trigger", 108, y, 110, trigger_locked ? draft[m].trigger : d.trigger, trigger_locked);
-         Button("bid", 224, y, 36, 20, "Bid");
-         Button("pick_trigger", 264, y, 40, 20, picking == "trigger" ? "..." : "Pick", picking == "trigger" ? C_INFO : C_PANEL);
          y += 25;
          Text("l_lot", 10, y + 3, "Lot", C_MUTED);
          Edit("lot", 108, y, 110, d.lot);
-         if(bot.spec.vol_step > 0)
-            Text("h_lot", 224, y + 3, "step " + GcNum(bot.spec.vol_step), C_MUTED, 8);
          y += 25;
          if(m == GC_CYCLE)
            {
@@ -484,7 +651,6 @@ private:
             y += 25;
             Text("l_stop", 10, y + 3, "Stop price", C_MUTED);
             Edit("stop", 108, y, 110, d.stop);
-            Button("pick_stop", 264, y, 40, 20, picking == "stop" ? "..." : "Pick", picking == "stop" ? C_INFO : C_PANEL);
             y += 25;
            }
          else
@@ -495,11 +661,9 @@ private:
             y += 25;
             Text("l_tp", 10, y + 3, d.price_input ? "TP price" : "TP points", C_MUTED);
             Edit("tp", 108, y, 110, d.tp);
-            Button("pick_tp", 264, y, 40, 20, picking == "tp" ? "..." : "Pick", picking == "tp" ? C_INFO : C_PANEL);
             y += 25;
             Text("l_sl", 10, y + 3, d.price_input ? "SL price" : "SL points", C_MUTED);
             Edit("sl", 108, y, 110, d.sl);
-            Button("pick_sl", 264, y, 40, 20, picking == "sl" ? "..." : "Pick", picking == "sl" ? C_INFO : C_PANEL);
             y += 25;
            }
          Button("adv", 10, y, 294, 20, advanced ? "Safety and advanced  (hide)" : "Safety and advanced  (show)", C_BG, C_MUTED);
@@ -523,14 +687,9 @@ private:
             Edit("hours", 108, y, 110, d.hours);
             Text("h_hours", 224, y + 3, "08:00-17:00", C_MUTED, 8);
             y += 24;
-            Button("tside", 10, y, 144, 20, "Trigger on: " + (d.tside == SIDE_ASK ? "Ask" : d.tside == SIDE_MID ? "Mid" : "Bid"));
-            Button("anchor", 160, y, 144, 20, "Levels from: " + (d.anchor == ANCHOR_FILL ? "Fill" : "Planned"));
-            y += 25;
            }
 
         }
-      else if(picking != "otp" && picking != "osl")
-         picking = "";
 
       //--- the open trade's TP / SL, Cycle and Single (dragging the lines in MetaTrader works too)
       if(holding && bot.pending_close == CR_NONE && bot.state != GCS_RESOLVING)
@@ -538,29 +697,32 @@ private:
          // a new trade, or levels changed on the trade: show the real values (never a left-over from before)
          if(draft[m].seen_ticket != bot.pos.ticket || MathAbs(draft[m].seen_tp - bot.cur_tp) > GC_EPS || MathAbs(draft[m].seen_sl - bot.cur_sl) > GC_EPS)
            {
+            if(draft[m].seen_ticket != bot.pos.ticket)   // a new trade: drop a half-typed value meant for the old one
+              {
+               ObjectDelete(0, GC_UI + "e_otp");
+               ObjectDelete(0, GC_UI + "e_osl");
+              }
             draft[m].seen_ticket = bot.pos.ticket; draft[m].seen_tp = bot.cur_tp; draft[m].seen_sl = bot.cur_sl;
-            draft[m].otp = bot.cur_tp > 0 ? DoubleToString(bot.cur_tp, 2) : "";
-            draft[m].osl = bot.cur_sl > 0 ? DoubleToString(bot.cur_sl, 2) : "";
+            draft[m].otp = LevelText(bot, true);
+            draft[m].osl = LevelText(bot, false);
             ObjectSetString(0, GC_UI + "e_otp", OBJPROP_TEXT, draft[m].otp);
             ObjectSetString(0, GC_UI + "e_osl", OBJPROP_TEXT, draft[m].osl);
            }
          Text("h_trade", 10, y + 2, "Change THIS open trade   (empty = none)", C_GOLD, 9, "Segoe UI Semibold");
          y += 22;
-         Text("l_otp", 10, y + 3, "TP price", C_UP);
-         Edit("otp", 108, y, 110, draft[m].otp);
-         Button("pick_otp", 224, y, 80, 20, picking == "otp" ? "click chart" : "Pick", picking == "otp" ? C_INFO : C_PANEL);
+         Text("l_ounit", 10, y + 3, "TP / SL as", C_MUTED);
+         Button("oprice", 108, y, 96, 20, "Price", openPoints ? C_PANEL : C_GOLD, openPoints ? C_TEXT : clrBlack);
+         Button("opoints", 208, y, 96, 20, "Points", openPoints ? C_GOLD : C_PANEL, openPoints ? clrBlack : C_TEXT);
          y += 25;
-         Text("l_osl", 10, y + 3, "SL price", C_DOWN);
-         Edit("osl", 108, y, 110, draft[m].osl);
-         Button("pick_osl", 224, y, 80, 20, picking == "osl" ? "click chart" : "Pick", picking == "osl" ? C_INFO : C_PANEL);
+         Text("l_otp", 10, y + 3, openPoints ? "TP points" : "TP price", C_UP);
+         Edit("otp", 108, y, 196, draft[m].otp);
          y += 25;
-         Button("setlv", 10, y, 294, 26, "Set TP / SL on this trade", C_UP, clrWhite);
-         y += 32;
-         if(trade_only)
-           {
-            Text("h_drag", 10, y, "You can also drag the TP / SL lines on the chart.", C_MUTED, 8);
-            y += 20;
-           }
+         Text("l_osl", 10, y + 3, openPoints ? "SL points" : "SL price", C_DOWN);
+         Edit("osl", 108, y, 196, draft[m].osl);
+         y += 25;
+         Text("h_enter", 10, y, openPoints ? "Distance from entry " + DoubleToString(bot.pos.price_open, 2) + ". Press Enter to apply."
+              : "Press Enter to apply, or drag the lines on the chart.", C_MUTED, 8);
+         y += 20;
         }
 
       //--- action buttons
@@ -578,12 +740,6 @@ private:
            }
          else
            {
-            if(Differs(bot))
-              {
-               Button("apply", 10, y, 200, 28, "Apply changes", C_INFO, clrWhite);
-               Button("discard", 216, y, 88, 28, "Discard");
-               y += 34;
-              }
             Button("after", 10, y, 144, 28, bot.stop_after ? "Stopping after..." : "Stop after cycle", bot.stop_after ? C_WARN : C_PANEL, bot.stop_after ? clrBlack : C_TEXT);
             Button("stopnow", 160, y, 144, 28, "Stop now");
             y += 34;
@@ -611,12 +767,9 @@ private:
       Button("killall", 10, y, 294, 28, "Close all and stop  (Ctrl+Shift+K = both)", C_BG, C_DOWN, C_DOWN);
       y += 34;
 
-      //--- messages: last button result, then what is wrong with the form
+      //--- messages: last result, then what is wrong with the form
       if(message != "")
-        {
-         Wrapped("msg", 10, y, message, messageColor, 48, 2);
-         y += 32;
-        }
+         y += 15 * Wrapped("msg", 10, y, message, messageColor, 50, 2) + 2;
       if(!running || m == GC_CYCLE)
         {
          SConfig c;
@@ -631,16 +784,18 @@ private:
                GcValidate(c, bot.spec, bot.lastTick, bot.haveTick && !running, errors, warnings);
            }
          int shown = 0;
-         for(int i = 0; i < ArraySize(errors) && shown < 2 && y < 620; i++, shown++, y += 16)
-            Text("err" + IntegerToString(i), 10, y, errors[i], C_DOWN, 8);
-         for(int i = 0; i < ArraySize(warnings) && shown < 4 && y < 620; i++, shown++, y += 16)
-            Text("warn" + IntegerToString(i), 10, y, warnings[i], C_WARN, 8);
+         for(int i = 0; i < ArraySize(errors) && shown < 2; i++, shown++)
+            y += 15 * Wrapped("err" + IntegerToString(i) + "_", 10, y, errors[i], C_DOWN, 50, 2) + 1;
+         for(int i = 0; i < ArraySize(warnings) && shown < 3; i++, shown++)
+            y += 15 * Wrapped("warn" + IntegerToString(i) + "_", 10, y, warnings[i], C_WARN, 50, 2) + 1;
         }
+      return y;
      }
 
-   void              Wrapped(const string id, const int x, const int y, string text, const color c, const int chars, const int lines)
+   int               Wrapped(const string id, const int x, const int y, string text, const color c, const int chars, const int lines)
      {
-      for(int i = 0; i < lines && text != ""; i++)
+      int i = 0;
+      for(; i < lines && text != ""; i++)
         {
          int cut = StringLen(text);
          if(cut > chars)
@@ -653,14 +808,14 @@ private:
          text = StringSubstr(text, cut);
          StringTrimLeft(text);
         }
+      return i;
      }
 
-   void              Info(CEngine *bot, const double today_pnl)
+   void              Status(CEngine *bot, const double today_pnl)
      {
-      int x = 314, w = 328;
-      //--- status
-      Rect("status", x, 58, w, 132, C_PANEL, C_BORDER);
-      Text("st", x + 10, 62, GcStateName(bot.state) + (bot.hasCfg && bot.state != GCS_IDLE ? "   " + bot.Label() : ""), StateColor(bot.state), 12, "Segoe UI Semibold");
+      int y = GC_HEAD + 30;
+      Rect("status", 10, y, 294, 92, C_PANEL, C_BORDER);
+      Text("st", 18, y + 4, GcStateName(bot.state) + (bot.hasCfg && bot.state != GCS_IDLE ? "   " + bot.Label() : ""), StateColor(bot.state), 12, "Segoe UI Semibold");
       string l1 = "";
       if(bot.state == GCS_ARMED || bot.state == GCS_OPENING)
          l1 = bot.waiting;
@@ -670,83 +825,23 @@ private:
          l1 = "Stopped: " + bot.stop_reason;
       else if(bot.pending_close != CR_NONE)
          l1 = "Closing position (" + GcReasonName(bot.pending_close) + ")...";
-      Text("w", x + 10, 86, l1, C_INFO, 8);
-      string p1 = "No open trade", p2 = "";
+      double next = bot.NextPlannedEntry();
+      if(l1 == "" && next > 0)
+         l1 = "Next entry " + DoubleToString(next, 2);
+      Wrapped("w", 18, y + 27, l1, C_INFO, 48, bot.hasPos ? 1 : 2);
       if(bot.hasPos)
         {
-         p1 = "#" + IntegerToString((long)bot.pos.ticket) + "  " + GcDirName(bot.pos.dir) + " " + GcNum(bot.pos.volume) + " @ " + DoubleToString(bot.pos.price_open, 2);
-         p2 = "TP " + bot.Px(bot.cur_tp) + "    SL " + bot.Px(bot.cur_sl);
+         Text("p1", 18, y + 41, "#" + IntegerToString((long)bot.pos.ticket) + "  " + GcDirName(bot.pos.dir) + " " + GcNum(bot.pos.volume) + " @ " + DoubleToString(bot.pos.price_open, 2));
+         Text("p2", 18, y + 56, "TP " + bot.Px(bot.cur_tp) + "    SL " + bot.Px(bot.cur_sl));
+         Text("pl_o", 18, y + 73, "Open " + Signed(bot.floating), bot.floating >= 0 ? C_UP : C_DOWN, 9, "Segoe UI Semibold");
         }
-      Text("p1", x + 10, 104, p1, bot.hasPos ? C_TEXT : C_MUTED);
-      Text("p2", x + 10, 121, p2, C_TEXT);
-      double next = bot.NextPlannedEntry();
-      Text("nx", x + 10, 138, next > 0 ? "Next entry " + DoubleToString(next, 2) : "", C_MUTED);
-      Text("pl_o", x + 10, 155, bot.hasPos ? "Open P/L " + Signed(bot.floating) : "", bot.floating >= 0 ? C_UP : C_DOWN, 10, "Segoe UI Semibold");
-      Text("pl_s", x + 10, 172, "This session " + Signed(bot.session_pnl), bot.session_pnl >= 0 ? C_UP : C_DOWN);
-      Text("pl_d", x + 170, 172, "Today " + Signed(today_pnl), today_pnl >= 0 ? C_UP : C_DOWN);
-
-      //--- preview of the next orders
-      Text("h_prev", x, 197, bot.mode == GC_CYCLE ? "Preview  (order 1 hits TP, order 2 hits SL, repeat)" : "Preview", C_MUTED, 8);
-      Rect("prev", x, 212, w, 94, C_PANEL, C_BORDER);
-      SConfig c;
-      string errors[];
-      BuildConfig(bot.mode, false, c, errors);
-      if(bot.Active() && bot.hasCfg)
-         c = bot.cfg;
-      bool good = bot.Active() || (ArraySize(errors) == 0 && GcNormalizeConfig(c) == "");
-      SPlanned plan[];
-      if(good)
-         GcPreview(c, 5, plan);
-      Text("pv_head", x + 8, 215, "Order     Entry        TP           SL", C_MUTED, 8, "Consolas");
-      for(int i = 0; i < ArraySize(plan); i++)
-         Text("pv" + IntegerToString(i), x + 8, 230 + 14 * i,
-              Pad(bot.mode == GC_CYCLE ? "C" + IntegerToString(plan[i].cycle) + "." + IntegerToString(plan[i].leg) : "Trade", 8)
-              + Pad(DoubleToString(plan[i].entry, 2), 12) + Pad(plan[i].tp > 0 ? DoubleToString(plan[i].tp, 2) : "-", 12)
-              + (plan[i].sl > 0 ? DoubleToString(plan[i].sl, 2) : "-"), C_TEXT, 8, "Consolas");
-
-      //--- journal (this session, newest first)
-      Text("h_j", x, 312, "Journal", C_MUTED, 8);
-      Rect("jr", x, 327, w, 132, C_PANEL, C_BORDER);
-      Text("j_head", x + 8, 330, "Order   Fill      Close     Result      P/L", C_MUTED, 8, "Consolas");
-      int n = ArraySize(bot.rows);
-      for(int i = 0; i < 8 && i < n; i++)
-        {
-         SRow r;
-         r = bot.rows[n - 1 - i];
-         string label = bot.mode == GC_CYCLE ? "C" + IntegerToString(r.cycle) + "." + IntegerToString(r.leg) : "Trade";
-         bool open = r.close_time == 0;
-         Text("j" + IntegerToString(i), x + 8, 345 + 14 * i,
-              Pad(label, 8) + Pad(DoubleToString(r.fill, 2), 10) + Pad(open ? "..." : DoubleToString(r.close_price, 2), 10)
-              + Pad(open ? "open" : GcReasonName(r.reason), 12) + (open ? "" : Signed(r.pnl)),
-              open ? C_TEXT : (r.pnl >= 0 ? C_UP : C_DOWN), 8, "Consolas");
-        }
-      if(n == 0)
-         Text("j_none", x + 8, 347, "No trades yet in this session.", C_MUTED, 8);
-
-      //--- log (newest first). Everything is also in the Experts tab.
-      Text("h_log", x, 465, "Log  (full text in the Experts tab)", C_MUTED, 8);
-      Rect("log", x, 480, w, 138, C_PANEL, C_BORDER);
-      int total = ArraySize(logText), line = 0;
-      for(int i = total - 1; i >= 0 && line < 9; i--)
-        {
-         string t = logText[i];
-         Text("g" + IntegerToString(line), x + 8, 483 + 14 * line, StringSubstr(t, 0, 58), (color)logColor[i], 8);
-         line++;
-         if(StringLen(t) > 58 && line < 9)
-           {
-            Text("g" + IntegerToString(line), x + 8, 483 + 14 * line, "    " + StringSubstr(t, 58, 58), (color)logColor[i], 8);
-            line++;
-           }
-        }
+      else
+         Text("p1", 18, y + 56, "No open trade", C_MUTED);
+      Text("pl_s", 108, y + 73, "Session " + Signed(bot.session_pnl), bot.session_pnl >= 0 ? C_UP : C_DOWN);
+      Text("pl_d", 208, y + 73, "Today " + Signed(today_pnl), today_pnl >= 0 ? C_UP : C_DOWN);
      }
 
    static string     Signed(const double v) { return (v >= 0 ? "+" : "") + DoubleToString(v, 2); }
-   static string     Pad(string s, const int w)
-     {
-      while(StringLen(s) < w)
-         s += " ";
-      return s;
-     }
   };
 
 #endif
